@@ -1,0 +1,651 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Финансовый Контроль</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 { font-size: 24px; margin-bottom: 10px; }
+        .header p { opacity: 0.9; font-size: 13px; }
+        
+        /* TABS */
+        .tabs {
+            display: flex;
+            background: #f8f9fa;
+            border-bottom: 2px solid #e0e0e0;
+        }
+        .tab {
+            flex: 1;
+            padding: 15px;
+            text-align: center;
+            cursor: pointer;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s;
+            border-bottom: 3px solid transparent;
+        }
+        .tab:hover { background: #e9ecef; }
+        .tab.active {
+            color: #667eea;
+            background: white;
+            border-bottom-color: #667eea;
+        }
+        
+        .tab-content {
+            display: none;
+            padding: 30px;
+        }
+        .tab-content.active { display: block; }
+        
+        /* CALCULATOR STYLES */
+        .date-badge {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 12px;
+            margin-bottom: 25px;
+            text-align: center;
+            font-size: 14px;
+            color: #666;
+        }
+        .date-badge strong { color: #333; font-size: 16px; }
+        .date-badge input[type="radio"] { cursor: pointer; }
+        .date-badge label:has(input:checked) { background: #667eea !important; color: white !important; }
+        .date-badge label:not(:has(input:checked)) { background: #e0e0e0; color: #666; }
+        .date-badge label { transition: all 0.3s; }
+        
+        .input-group { margin-bottom: 20px; }
+        .input-label {
+            display: block;
+            font-size: 13px;
+            font-weight: 600;
+            color: #555;
+            margin-bottom: 8px;
+        }
+        .input-field {
+            width: 100%;
+            padding: 15px;
+            font-size: 18px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            transition: all 0.3s;
+        }
+        .input-field:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        .input-hint {
+            font-size: 11px;
+            color: #999;
+            margin-top: 5px;
+            font-style: italic;
+        }
+        .calculate-button {
+            width: 100%;
+            padding: 18px;
+            font-size: 18px;
+            font-weight: bold;
+            color: white;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 10px;
+        }
+        .calculate-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+        .results { margin-top: 30px; }
+        .main-result {
+            background: linear-gradient(135deg, #56ab2f 0%, #a8e063 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 15px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .main-result .label { font-size: 14px; opacity: 0.9; margin-bottom: 10px; }
+        .main-result .value { font-size: 48px; font-weight: bold; margin-bottom: 5px; }
+        .main-result .emoji { font-size: 36px; margin-top: 10px; }
+        .target-box {
+            background: #fff3e0;
+            padding: 20px;
+            border-radius: 12px;
+            margin-bottom: 15px;
+            border-left: 4px solid #ff6b35;
+        }
+        .target-box .label { font-size: 13px; color: #666; margin-bottom: 5px; }
+        .target-box .value { font-size: 24px; font-weight: bold; color: #ff6b35; }
+        .target-box .hint { font-size: 11px; color: #999; margin-top: 5px; font-style: italic; }
+        
+        /* DASHBOARD STYLES */
+        .dashboard-loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        .dashboard-loading .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .total-progress {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+        }
+        .total-progress h2 { font-size: 18px; margin-bottom: 20px; text-align: center; }
+        .progress-stats {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .stat-box {
+            background: rgba(255,255,255,0.2);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .stat-box .label { font-size: 11px; opacity: 0.9; margin-bottom: 5px; }
+        .stat-box .value { font-size: 24px; font-weight: bold; }
+        .progress-bar-container {
+            background: rgba(255,255,255,0.2);
+            border-radius: 10px;
+            height: 30px;
+            overflow: hidden;
+            position: relative;
+        }
+        .progress-bar {
+            background: linear-gradient(90deg, #56ab2f 0%, #a8e063 100%);
+            height: 100%;
+            transition: width 0.5s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        
+        .filials-ranking {
+            margin-bottom: 30px;
+        }
+        .filials-ranking h3 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: #333;
+        }
+        .filial-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .filial-rank {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+            min-width: 40px;
+        }
+        .filial-info {
+            flex: 1;
+        }
+        .filial-name {
+            font-weight: 600;
+            margin-bottom: 5px;
+            color: #333;
+        }
+        .filial-revenue {
+            font-size: 13px;
+            color: #666;
+        }
+        .filial-percent {
+            font-size: 20px;
+            font-weight: bold;
+            min-width: 70px;
+            text-align: right;
+        }
+        .filial-percent.good { color: #56ab2f; }
+        .filial-percent.ok { color: #f39c12; }
+        .filial-percent.bad { color: #e74c3c; }
+        
+        .action-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 20px;
+        }
+        .action-button {
+            padding: 15px;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .save-button {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            color: white;
+        }
+        .table-button {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            color: white;
+        }
+        .refresh-button {
+            background: linear-gradient(135deg, #fa709a 0%, #fee140 100%);
+            color: white;
+        }
+        .action-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        
+        .version-badge {
+            text-align: center;
+            padding: 10px;
+            font-size: 11px;
+            color: #999;
+        }
+        
+        .error-message {
+            background: #fee;
+            border-left: 4px solid #e74c3c;
+            padding: 15px;
+            border-radius: 8px;
+            color: #c0392b;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>💰 Финансовый Контроль</h1>
+            <p>Калькулятор и дашборд филиалов</p>
+        </div>
+        
+        <!-- TABS -->
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('calculator')">🧮 Калькулятор</div>
+            <div class="tab" onclick="switchTab('dashboard')">📊 Дашборд</div>
+        </div>
+        
+        <!-- CALCULATOR TAB -->
+        <div class="tab-content active" id="calculator-tab">
+            <div class="date-badge">
+                <div id="dateDisplay"></div>
+                <div style="margin-top: 10px; padding-top: 10px; border-top: 1px solid #ddd;">
+                    <label style="font-size: 12px; color: #666; display: block; margin-bottom: 5px;">
+                        📅 Данные актуальны на:
+                    </label>
+                    <div style="display: flex; gap: 10px; justify-content: center;">
+                        <label style="cursor: pointer; padding: 8px 15px; background: #667eea; color: white; border-radius: 8px; font-size: 13px; transition: all 0.3s;">
+                            <input type="radio" name="dataDate" value="today" checked style="margin-right: 5px;">
+                            Сегодня
+                        </label>
+                        <label style="cursor: pointer; padding: 8px 15px; background: #e0e0e0; color: #666; border-radius: 8px; font-size: 13px; transition: all 0.3s;">
+                            <input type="radio" name="dataDate" value="yesterday" style="margin-right: 5px;">
+                            Вчера
+                        </label>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="input-group">
+                <label class="input-label">Оборот ателье на сегодня (₽)</label>
+                <input type="number" id="revenueAtelie" class="input-field" placeholder="1300000">
+                <div class="input-hint">Нарастающим итогом (актуальность выберите выше)</div>
+            </div>
+            
+            <div class="input-group">
+                <label class="input-label">Остаток на всех счетах (₽)</label>
+                <input type="number" id="balance" class="input-field" placeholder="450000">
+                <div class="input-hint">Все деньги на данный момент</div>
+            </div>
+            
+            <div class="input-group">
+                <label class="input-label">ФАКТ химчистка (₽) - необязательно</label>
+                <input type="number" id="revenueHimchistka" class="input-field" placeholder="Оставьте пустым">
+                <div class="input-hint">Если пусто, используется план</div>
+            </div>
+            
+            <button class="calculate-button" onclick="calculate()">🧮 РАССЧИТАТЬ</button>
+            
+            <div class="results" id="results" style="display: none;">
+                <div class="main-result">
+                    <div class="label">Можно потратить на жизнь</div>
+                    <div class="value" id="canSpend">—</div>
+                    <div class="emoji" id="statusEmoji">🟢</div>
+                </div>
+                
+                <div class="target-box">
+                    <div class="label">🎯 Целевой остаток к концу месяца:</div>
+                    <div class="value" id="targetBalance">—</div>
+                    <div class="hint">Минимум для покрытия обязательных платежей</div>
+                </div>
+                
+                <div class="action-buttons">
+                    <button class="action-button save-button" onclick="saveToGoogleSheets()">💾 Сохранить</button>
+                    <button class="action-button table-button" onclick="openTable()">📊 Открыть таблицу</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- DASHBOARD TAB -->
+        <div class="tab-content" id="dashboard-tab">
+            <div class="dashboard-loading" id="dashboard-loading">
+                <div class="spinner"></div>
+                <p>Загрузка данных из Google Sheets...</p>
+            </div>
+            
+            <div id="dashboard-content" style="display: none;">
+                <!-- Total Progress -->
+                <div class="total-progress">
+                    <h2>🏢 Общий прогресс сети</h2>
+                    <div class="progress-stats">
+                        <div class="stat-box">
+                            <div class="label">Ателье</div>
+                            <div class="value" id="totalAtelie">—</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="label">Химчистка</div>
+                            <div class="value" id="totalHimchistka">—</div>
+                        </div>
+                        <div class="stat-box">
+                            <div class="label">Всего</div>
+                            <div class="value" id="totalRevenue">—</div>
+                        </div>
+                    </div>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" id="totalProgress" style="width: 0%">0%</div>
+                    </div>
+                </div>
+                
+                <!-- Filials Ranking -->
+                <div class="filials-ranking">
+                    <h3>🏆 Рейтинг филиалов (январь 2026)</h3>
+                    <div id="filialsRanking"></div>
+                </div>
+                
+                <button class="action-button refresh-button" onclick="loadDashboard()" style="width: 100%;">🔄 Обновить данные</button>
+            </div>
+            
+            <div id="dashboard-error" style="display: none;"></div>
+        </div>
+        
+        <div class="version-badge">v3.0 | Калькулятор + Дашборд</div>
+    </div>
+    
+    <script>
+        const API_URL = 'https://script.google.com/macros/s/AKfycbzIVIbMGcbZt9Qqubm4d_LgMp1mUCutZpk1nSKOYiPoCnANu-UG_cZSogN9IvgA4mRivw/exec';
+        const MARGIN_ATELIE = 0.50;
+        const MARGIN_HIMCHISTKA = 0.40;
+        const RENT_MONTHLY = 396000;
+        const MONTHLY_LIMIT = 300000;
+        const GOOGLE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1DNk4FNdcy9U08_si-TGr1vZIK_J0yzMp/edit?gid=458559377#gid=458559377";
+        
+        const monthlyPlans = {
+            1: { himchistka: 228854, obligations: 912754, earlyPayments: 0 },
+            2: { himchistka: 165936, obligations: 881295, earlyPayments: 0 },
+            3: { himchistka: 302489, obligations: 949571, earlyPayments: 0 },
+            4: { himchistka: 338583, obligations: 967619, earlyPayments: 293230 },
+            5: { himchistka: 259800, obligations: 867027, earlyPayments: 359915 },
+            6: { himchistka: 191578, obligations: 832516, earlyPayments: 339139 },
+            7: { himchistka: 152650, obligations: 813052, earlyPayments: 120018 },
+            8: { himchistka: 203227, obligations: 838341, earlyPayments: 228641 },
+            9: { himchistka: 234922, obligations: 755526, earlyPayments: 320736 },
+            10: { himchistka: 350093, obligations: 793645, earlyPayments: 410161 },
+            11: { himchistka: 321824, obligations: 735732, earlyPayments: 476512 },
+            12: { himchistka: 287256, obligations: 709013, earlyPayments: 473950 }
+        };
+        
+        // TAB SWITCHING
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            
+            if (tabName === 'calculator') {
+                document.querySelectorAll('.tab')[0].classList.add('active');
+                document.getElementById('calculator-tab').classList.add('active');
+            } else {
+                document.querySelectorAll('.tab')[1].classList.add('active');
+                document.getElementById('dashboard-tab').classList.add('active');
+                loadDashboard();
+            }
+        }
+        
+        // LOAD DASHBOARD DATA
+        async function loadDashboard() {
+            const loading = document.getElementById('dashboard-loading');
+            const content = document.getElementById('dashboard-content');
+            const error = document.getElementById('dashboard-error');
+            
+            loading.style.display = 'block';
+            content.style.display = 'none';
+            error.style.display = 'none';
+            
+            try {
+                const response = await fetch(API_URL);
+                const data = await response.json();
+                
+                // Display totals
+                document.getElementById('totalAtelie').textContent = formatNumber(data.totals.atelie);
+                document.getElementById('totalHimchistka').textContent = formatNumber(data.totals.himchistka);
+                document.getElementById('totalRevenue').textContent = formatNumber(data.totals.total);
+                
+                // Calculate progress (example: compare to plan)
+                const planTotal = 1662696; // January plan from your data
+                const progressPercent = Math.min(100, Math.round((data.totals.atelie / planTotal) * 100));
+                document.getElementById('totalProgress').style.width = progressPercent + '%';
+                document.getElementById('totalProgress').textContent = progressPercent + '%';
+                
+                // Sort filials by revenue
+                const sortedFilials = [...data.filials].sort((a, b) => b.revenue.total - a.revenue.total);
+                
+                // Display ranking
+                const rankingHtml = sortedFilials.map((filial, index) => {
+                    const rank = index + 1;
+                    const revenue = filial.revenue.total;
+                    const percentClass = revenue > 150000 ? 'good' : (revenue > 100000 ? 'ok' : 'bad');
+                    const emoji = revenue > 150000 ? '🟢' : (revenue > 100000 ? '🟡' : '🔴');
+                    
+                    return `
+                        <div class="filial-card">
+                            <div class="filial-rank">${rank}</div>
+                            <div class="filial-info">
+                                <div class="filial-name">${filial.name}</div>
+                                <div class="filial-revenue">
+                                    Ателье: ${formatNumber(filial.revenue.atelie)} | 
+                                    Химчистка: ${formatNumber(filial.revenue.himchistka)}
+                                </div>
+                            </div>
+                            <div class="filial-percent ${percentClass}">
+                                ${emoji} ${formatNumber(revenue)}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+                
+                document.getElementById('filialsRanking').innerHTML = rankingHtml;
+                
+                loading.style.display = 'none';
+                content.style.display = 'block';
+                
+            } catch (err) {
+                loading.style.display = 'none';
+                error.style.display = 'block';
+                error.innerHTML = `
+                    <div class="error-message">
+                        <strong>⚠️ Ошибка загрузки данных</strong><br>
+                        ${err.message}<br><br>
+                        Попробуйте обновить страницу или проверьте подключение к интернету.
+                    </div>
+                `;
+            }
+        }
+        
+        // CALCULATOR FUNCTIONS
+        function updateDate() {
+            const now = new Date();
+            const day = now.getDate();
+            const month = now.getMonth() + 1;
+            const year = now.getFullYear();
+            const monthNames = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+            const daysInMonth = new Date(year, month, 0).getDate();
+            const daysLeft = daysInMonth - day;
+            document.getElementById('dateDisplay').innerHTML = `<strong>${monthNames[month - 1]} ${year}</strong><br>День ${day} из ${daysInMonth} (осталось ${daysLeft} дней)`;
+            return { day, month, year, daysInMonth };
+        }
+        
+        function formatNumber(num, round = false) {
+            if (round) num = Math.round(num / 1000) * 1000;
+            return new Intl.NumberFormat('ru-RU').format(Math.round(num)) + ' ₽';
+        }
+        
+        function calculate() {
+            const dateInfo = updateDate();
+            let { day, month, year, daysInMonth } = dateInfo;
+            
+            const dataDate = document.querySelector('input[name="dataDate"]:checked').value;
+            const actualDay = (dataDate === 'yesterday') ? day - 1 : day;
+            
+            const revenueAtelie = parseFloat(document.getElementById('revenueAtelie').value) || 0;
+            const balance = parseFloat(document.getElementById('balance').value) || 0;
+            const himchistkaInput = document.getElementById('revenueHimchistka').value;
+            
+            if (revenueAtelie === 0) { alert('⚠️ Введите оборот ателье!'); return; }
+            if (balance === 0) { alert('⚠️ Введите остаток на счетах!'); return; }
+            
+            const plan = monthlyPlans[month];
+            const nonWorkingDaysStart = (month === 1) ? 4 : 0;
+            const workingDaysInMonth = daysInMonth - nonWorkingDaysStart;
+            const workingDaysPassed = actualDay - nonWorkingDaysStart;
+            const workingDaysLeft = workingDaysInMonth - workingDaysPassed;
+            
+            const avgPerDay = revenueAtelie / workingDaysPassed;
+            const forecastAtelie = avgPerDay * workingDaysInMonth;
+            
+            let himchistka, himchistkaSource;
+            if (himchistkaInput) {
+                himchistka = parseFloat(himchistkaInput);
+                himchistkaSource = '(факт)';
+            } else {
+                himchistka = (plan.himchistka / workingDaysInMonth) * workingDaysPassed;
+                himchistkaSource = `(план × ${workingDaysPassed}/${workingDaysInMonth})`;
+            }
+            
+            const himchistkaForecast = himchistkaInput ? parseFloat(himchistkaInput) : plan.himchistka;
+            const forecastMargin = (forecastAtelie * MARGIN_ATELIE) + (himchistkaForecast * MARGIN_HIMCHISTKA) - RENT_MONTHLY;
+            const marginPerDay = forecastMargin / workingDaysInMonth;
+            const expectedMarginRemaining = marginPerDay * workingDaysLeft;
+            const forecastRevenueRemaining = avgPerDay * workingDaysLeft;
+            const expectedIncomeAtelie = forecastRevenueRemaining * 0.5;
+            const expectedIncomeHimchistka = ((plan.himchistka / workingDaysInMonth) * workingDaysLeft);
+            const expectedIncome = expectedIncomeAtelie + expectedIncomeHimchistka;
+            const balanceAtEndOfMonth = balance + expectedIncome + 100000;
+            const afterObligations = balanceAtEndOfMonth - plan.obligations;
+            const afterEarlyPayments = afterObligations - plan.earlyPayments;
+            const canSpendSafe = Math.round(afterEarlyPayments / 1000) * 1000;
+            const canSpendMax = Math.round(afterObligations / 1000) * 1000;
+            const hasReserve = plan.earlyPayments > 0;
+            const mainAmount = hasReserve ? canSpendMax : canSpendSafe;
+            
+            document.getElementById('canSpend').textContent = formatNumber(mainAmount, false);
+            const emoji = mainAmount > 150000 ? '🟢' : (mainAmount > 50000 ? '🟡' : '🔴');
+            document.getElementById('statusEmoji').textContent = emoji;
+            
+            const targetBalance = plan.obligations - 100000;
+            document.getElementById('targetBalance').textContent = formatNumber(targetBalance, true);
+            document.getElementById('results').style.display = 'block';
+            
+            window.calculationData = {
+                date: new Date().toISOString(),
+                month, day: actualDay, revenueAtelie,
+                himchistka: himchistkaForecast, balance, forecastMargin,
+                canSpendSafe, canSpendMax,
+                status: emoji
+            };
+        }
+        
+        function saveToGoogleSheets() {
+            if (!window.calculationData) { alert('❌ Сначала нажмите "РАССЧИТАТЬ"!'); return; }
+            const data = window.calculationData;
+            const row = [
+                new Date(data.date).toLocaleString('ru-RU'), data.month, data.day,
+                data.revenueAtelie, data.himchistka, data.balance,
+                Math.round(data.forecastMargin), Math.round(data.canSpendSafe),
+                Math.round(data.canSpendMax),
+                data.status, ''
+            ];
+            const textToCopy = row.join('\t');
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(textToCopy).then(() => {
+                    alert('✅ Данные скопированы!\n\nОткройте Google Таблицу → лист "📅 История проверок" → Ctrl+V');
+                }).catch(() => showFallback(textToCopy));
+            } else {
+                showFallback(textToCopy);
+            }
+        }
+        
+        function showFallback(text) {
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            try {
+                document.execCommand('copy');
+                alert('✅ Данные скопированы!\n\nОткройте таблицу и нажмите Ctrl+V');
+            } catch (err) {
+                alert('⚠️ Скопируйте вручную:\n\n' + text);
+            }
+            document.body.removeChild(textarea);
+        }
+        
+        function openTable() {
+            window.open(GOOGLE_SHEET_URL, '_blank');
+        }
+        
+        updateDate();
+    </script>
+</body>
+</html>
