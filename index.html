@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <link rel="manifest" href="manifest.json">
 <title>Финансовая система</title>
 <style>
@@ -35,9 +35,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
 /* BOTTOM NAV */
 .bottom-nav {
-  position: fixed; bottom: 0; left: 0; right: 0; background: white;
-  display: flex; border-top: 1px solid var(--border); z-index: 100;
-  padding-bottom: env(safe-area-inset-bottom);
+  position: sticky; top: 0; left: 0; right: 0; background: white;
+  display: flex; border-bottom: 1px solid var(--border); z-index: 99;
+  padding: 0;
 }
 .nav-btn {
   flex: 1; padding: 8px 4px 6px; border: none; background: none; cursor: pointer;
@@ -49,7 +49,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .nav-icon { font-size: 22px; }
 
 /* TABS */
-.main-tab { display: none; padding: 12px; min-height: calc(100vh - 140px); }
+.main-tab { display: none; padding: 12px; min-height: calc(100vh - 100px); }
 .main-tab.active { display: block; }
 
 /* CARDS */
@@ -158,7 +158,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .section-toggle.open .arrow { transform: rotate(90deg); }
 
 /* FAMILY IFRAME */
-#tab-family iframe { width: 100%; height: calc(100vh - 140px); border: none; border-radius: var(--radius); background: #f3f4f6; }
+#tab-family iframe { width: 100%; height: calc(100vh - 100px); border: none; border-radius: var(--radius); background: #f3f4f6; }
 
 /* TOAST */
 .toast { position: fixed; top: 70px; left: 50%; transform: translateX(-50%) translateY(-100px); background: #333; color: white; padding: 10px 20px; border-radius: 20px; font-size: 13px; font-weight: 600; z-index: 200; transition: transform 0.3s; pointer-events: none; }
@@ -178,6 +178,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <button class="btn-refresh" onclick="refreshAll()" title="Обновить">&#x21bb;</button>
   </div>
 </header>
+
+<nav class="bottom-nav">
+  <button class="nav-btn active" onclick="switchTab('home', this)" id="nav-home">
+    <span class="nav-icon">&#x1F3E0;</span>Главная
+  </button>
+  <button class="nav-btn" onclick="switchTab('business', this)" id="nav-business">
+    <span class="nav-icon">&#x1F3E2;</span>Бизнес
+  </button>
+  <button class="nav-btn" onclick="switchTab('family', this)" id="nav-family">
+    <span class="nav-icon">&#x1F45B;</span>Семья
+  </button>
+</nav>
 
 <!-- ═══════════════════════════════════════ -->
 <!-- TAB: ГЛАВНАЯ (overview dashboard) -->
@@ -261,21 +273,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 <!-- TAB: СЕМЬЯ (iframe) -->
 <!-- ═══════════════════════════════════════ -->
 <div class="main-tab" id="tab-family">
-  <iframe id="familyFrame" src="family.html?embedded=1" style="width:100%; height:calc(100vh - 140px); border:none; border-radius:var(--radius); background:#f3f4f6;"></iframe>
+  <iframe id="familyFrame" src="family.html?embedded=1" style="width:100%; height:calc(100vh - 100px); border:none; border-radius:var(--radius); background:#f3f4f6;"></iframe>
 </div>
 
 <!-- BOTTOM NAV -->
-<nav class="bottom-nav">
-  <button class="nav-btn active" onclick="switchTab('home', this)" id="nav-home">
-    <span class="nav-icon">&#x1F3E0;</span>Главная
-  </button>
-  <button class="nav-btn" onclick="switchTab('business', this)" id="nav-business">
-    <span class="nav-icon">&#x1F3E2;</span>Бизнес
-  </button>
-  <button class="nav-btn" onclick="switchTab('family', this)" id="nav-family">
-    <span class="nav-icon">&#x1F45B;</span>Семья
-  </button>
-</nav>
+<!-- NAV MOVED TO TOP -->
 
 <div class="toast" id="toast"></div>
 
