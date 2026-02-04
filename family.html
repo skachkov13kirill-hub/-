@@ -274,6 +274,7 @@
     <button onclick="showTab('trends')" class="tab-btn bg-white text-gray-600 hover:bg-purple-50 px-5 py-2.5 rounded-xl font-medium transition-all whitespace-nowrap" data-tab="trends">📈 Динамика</button>
     <button onclick="showTab('transactions')" class="tab-btn bg-white text-gray-600 hover:bg-purple-50 px-5 py-2.5 rounded-xl font-medium transition-all whitespace-nowrap" data-tab="transactions">📜 Операции</button>
     <button onclick="showTab('excluded')" class="tab-btn bg-white text-gray-600 hover:bg-purple-50 px-5 py-2.5 rounded-xl font-medium transition-all whitespace-nowrap" data-tab="excluded">🚫 Исключения</button>
+    <button onclick="showTab('bizexpenses')" class="tab-btn bg-white text-gray-600 hover:bg-purple-50 px-5 py-2.5 rounded-xl font-medium transition-all whitespace-nowrap" data-tab="bizexpenses">💼 Ателье</button>
   </div>
 
   <!-- Tab Content -->
@@ -809,6 +810,19 @@ let budgetData = {
 // Пользовательские правила категоризации (приоритет выше паттернов)
 let userCategoryRules = {};
 
+// Бизнес-категории расходов ателье
+const BIZ_EXPENSE_CATS = {
+  'rent':        { name: 'Аренда',              icon: '🏠', color: '#E17055' },
+  'supplies':    { name: 'Закупки',             icon: '🧵', color: '#FDCB6E' },
+  'drycleaning': { name: 'Химчистка',           icon: '👔', color: '#74B9FF' },
+  'taxes':       { name: 'Комиссии/Налоги',     icon: '🏦', color: '#A29BFE' },
+  'maintenance': { name: 'Амортизация',         icon: '🔧', color: '#55EFC4' },
+  'bonuses':     { name: 'Премии/Корпоративы',  icon: '🎉', color: '#FF7675' }
+};
+
+// Правила привязки получателя → бизнес-категория  { "ПОЛУЧАТЕЛЬ": "rent" }
+let businessRules = {};
+
 let currentMonth = '2026-01';
 let currentOwner = 'all';
 let pendingTransactions = [];
@@ -908,15 +922,19 @@ function loadUserRules() {
   try {
     const saved = localStorage.getItem('userCategoryRules');
     if (saved) userCategoryRules = JSON.parse(saved);
+    const savedBiz = localStorage.getItem('businessRules');
+    if (savedBiz) businessRules = JSON.parse(savedBiz);
   } catch (e) {
     console.error('Error loading user rules:', e);
     userCategoryRules = {};
+    businessRules = {};
   }
 }
 
 // Сохранение пользовательских правил
 function saveUserRules() {
   localStorage.setItem('userCategoryRules', JSON.stringify(userCategoryRules));
+  localStorage.setItem('businessRules', JSON.stringify(businessRules));
   uploadAllDataDebounced();
 }
 
@@ -1986,9 +2004,10 @@ async function syncWithSheets() {
   
   try {
     // ШАГ 1: PULL из облака
-    const [txData, exData, rulesData, settingsData] = await Promise.all([
+    const [txData, exData, rulesData, settingsData, bizRulesData] = await Promise.all([
       fetchFromSheets('transactions'), fetchFromSheets('excluded'),
-      fetchFromSheets('rules'), fetchFromSheets('settings')
+      fetchFromSheets('rules'), fetchFromSheets('settings'),
+      fetchFromSheets('bizrules')
     ]);
     
     // ШАГ 2: Merge + нормализация + дедупликация
@@ -2001,6 +2020,10 @@ async function syncWithSheets() {
     if (rulesData.success && rulesData.data && Object.keys(rulesData.data).length > 0) {
       userCategoryRules = { ...userCategoryRules, ...rulesData.data };
       saveUserRules();
+    }
+    if (bizRulesData && bizRulesData.success && bizRulesData.data && Object.keys(bizRulesData.data).length > 0) {
+      businessRules = { ...businessRules, ...bizRulesData.data };
+      localStorage.setItem('businessRules', JSON.stringify(businessRules));
     }
     if (settingsData.success && settingsData.data && Object.keys(settingsData.data).length > 0) {
       applyCloudSettings(settingsData.data);
@@ -2083,6 +2106,9 @@ async function uploadAllData() {
   }
   if (Object.keys(userCategoryRules).length > 0) {
     promises.push(uploadToSheets(userCategoryRules, 'rules'));
+  }
+  if (Object.keys(businessRules).length > 0) {
+    promises.push(uploadToSheets(businessRules, 'bizrules'));
   }
   promises.push(uploadToSheets(getSettingsForSync(), 'settings'));
   return Promise.all(promises);
@@ -2305,6 +2331,9 @@ function renderTab(tabName) {
     case 'excluded':
       content.innerHTML = renderExcluded();
       break;
+    case 'bizexpenses':
+      content.innerHTML = renderBizExpenses();
+      break;
   }
 }
 
@@ -2354,6 +2383,12 @@ function renderOverview(transactions) {
   document.getElementById('progressPercent').textContent = Math.round(progressPct) + '%';
   document.getElementById('remainingBudget').textContent = norm > total ? `Остаток: ${formatMoney(norm - total)}` : `Перерасход: ${formatMoney(total - norm)}`;
   document.getElementById('progressBar').className = `progress-bar h-full rounded-full ${total > norm ? 'bg-red-400' : 'bg-white'}`;
+  
+  // Отправляем сводку в родительское окно (для Главной в index.html)
+  if (window.parent !== window) {
+    try { window.parent.postMessage({ type: 'familySummary', spent: total, budget: norm }, '*'); } catch(e) {}
+    try { sendBizExpensesSummary(); } catch(e) {}
+  }
   
   // Категории с превышением и запасом
   const overBudget = [];
@@ -2677,7 +2712,7 @@ function renderExcluded() {
               </div>
               <div class="text-right">
                 <div class="text-lg font-bold text-orange-600">${formatMoney(stats.total)}</div>
-                <div class="text-xs text-gray-400" id="excl_${reason}_arrow">â–¼</div>
+                <div class="text-xs text-gray-400" id="excl_${reason}_arrow">▼</div>
               </div>
             </div>
           </div>
@@ -2693,7 +2728,7 @@ function renderExcluded() {
                   <div class="p-3 hover:bg-orange-50 transition group">
                     <div class="flex justify-between items-start mb-2">
                       <div class="flex-1 cursor-pointer" onclick="showExcludedDrill('${recipient.replace(/'/g, "\\'")}', '${reason}')">
-                        <div class="font-medium text-gray-800 text-sm">${recipient}</div>
+                        <div class="font-medium text-gray-800 text-sm">${recipient}${(() => { const bk = businessRules[(recipient || '').toUpperCase().trim()]; return bk && BIZ_EXPENSE_CATS[bk] ? ' <span style="font-size:9px; background:' + BIZ_EXPENSE_CATS[bk].color + '20; color:' + BIZ_EXPENSE_CATS[bk].color + '; padding:1px 6px; border-radius:4px; font-weight:600;">' + BIZ_EXPENSE_CATS[bk].icon + ' ' + BIZ_EXPENSE_CATS[bk].name + '</span>' : ''; })()}</div>
                         <div class="text-xs text-gray-400">${data.count} операций • ${activeMonths} мес</div>
                       </div>
                       <div class="flex items-start gap-2">
@@ -2772,7 +2807,7 @@ function toggleExclSection(id) {
   const arrow = document.getElementById(id + '_arrow');
   if (el) {
     el.classList.toggle('hidden');
-    if (arrow) arrow.textContent = el.classList.contains('hidden') ? 'â–¼' : 'â–²';
+    if (arrow) arrow.textContent = el.classList.contains('hidden') ? '▼' : '▲';
   }
 }
 
@@ -2842,6 +2877,23 @@ function showExcludedDrill(recipient, reason) {
           <div class="font-bold text-gray-700">${txs.length}</div>
         </div>
       </div>
+    </div>
+    
+    <!-- Пометить как расход ателье -->
+    <div class="mb-4 p-4 bg-purple-50 rounded-xl border border-purple-200">
+      <h4 class="font-semibold text-purple-800 mb-2">💼 Расход ателье</h4>
+      <p class="text-xs text-purple-600 mb-3">Пометить «${recipient.substring(0, 25)}» как бизнес-расход</p>
+      <select id="bizCategorySelect" class="w-full p-3 border rounded-xl text-sm mb-2">
+        <option value="">— Не бизнес —</option>
+        ${Object.entries(BIZ_EXPENSE_CATS).map(([k, v]) => {
+          const sel = businessRules[(recipient || '').toUpperCase().trim()] === k ? 'selected' : '';
+          return '<option value="' + k + '" ' + sel + '>' + v.icon + ' ' + v.name + '</option>';
+        }).join('')}
+      </select>
+      <button onclick="tagAsBusiness('${recipient.replace(/'/g, "\\'")}', document.getElementById('bizCategorySelect').value)" 
+              class="w-full bg-purple-600 hover:bg-purple-700 text-white py-3 rounded-xl text-sm font-bold transition">
+        💼 Сохранить
+      </button>
     </div>
     
     <!-- Перенос в бюджет -->
@@ -3226,7 +3278,212 @@ function deleteAllExcludedRecipient(merchant, reason) {
   });
 }
 
-// Показать модал выбора категории для мерчанта (глобально)
+// ==================== БИЗНЕС-РАСХОДЫ АТЕЛЬЕ ====================
+
+function tagAsBusiness(recipient, bizCategory) {
+  const key = (recipient || '').toUpperCase().trim();
+  if (!key) return;
+  
+  if (!bizCategory) {
+    // Снять пометку
+    delete businessRules[key];
+    showToast({ icon: '🚫', title: 'Метка снята', message: `«${recipient.substring(0, 25)}» больше не бизнес-расход`, type: 'info' });
+  } else {
+    businessRules[key] = bizCategory;
+    const catName = BIZ_EXPENSE_CATS[bizCategory] ? BIZ_EXPENSE_CATS[bizCategory].name : bizCategory;
+    showToast({ icon: '💼', title: 'Помечено как бизнес', message: `«${recipient.substring(0, 25)}» → ${catName}`, type: 'success' });
+  }
+  
+  saveUserRules();
+  hideDrillModal();
+  renderTab('excluded');
+  
+  // Обновляем родительское окно
+  sendBizExpensesSummary();
+}
+
+function getBizExpenseTransactions() {
+  const excl = budgetData.excludedTransactions || [];
+  const result = [];
+  
+  excl.forEach(tx => {
+    const m = (tx.merchant || tx.description || '').toUpperCase().trim();
+    if (businessRules[m]) {
+      result.push({ ...tx, bizCategory: businessRules[m] });
+    }
+  });
+  
+  return result;
+}
+
+function sendBizExpensesSummary() {
+  if (window.parent === window) return;
+  
+  const txs = getBizExpenseTransactions();
+  const byCat = {};
+  Object.keys(BIZ_EXPENSE_CATS).forEach(k => { byCat[k] = 0; });
+  txs.forEach(tx => { byCat[tx.bizCategory] = (byCat[tx.bizCategory] || 0) + tx.amount; });
+  const total = txs.reduce((s, t) => s + t.amount, 0);
+  
+  try {
+    window.parent.postMessage({ type: 'bizExpensesSummary', total, byCat, count: txs.length }, '*');
+  } catch(e) {}
+}
+
+function renderBizExpenses() {
+  const txs = getBizExpenseTransactions();
+  const allExcl = budgetData.excludedTransactions || [];
+  const rulesCount = Object.keys(businessRules).length;
+  
+  // Все помеченные месяцы
+  const allMonths = new Set();
+  txs.forEach(tx => { if (tx.monthKey) allMonths.add(tx.monthKey); });
+  const months = [...allMonths].sort();
+  const monthCount = months.length || 1;
+  
+  // Группируем по бизнес-категории
+  const byCat = {};
+  Object.keys(BIZ_EXPENSE_CATS).forEach(k => { byCat[k] = { total: 0, count: 0, recipients: {}, months: {} }; });
+  
+  txs.forEach(tx => {
+    const cat = tx.bizCategory;
+    if (!byCat[cat]) return;
+    byCat[cat].total += tx.amount;
+    byCat[cat].count++;
+    
+    const m = tx.merchant || tx.description?.substring(0, 35) || '?';
+    if (!byCat[cat].recipients[m]) byCat[cat].recipients[m] = { total: 0, count: 0 };
+    byCat[cat].recipients[m].total += tx.amount;
+    byCat[cat].recipients[m].count++;
+    
+    byCat[cat].months[tx.monthKey] = (byCat[cat].months[tx.monthKey] || 0) + tx.amount;
+  });
+  
+  const grandTotal = txs.reduce((s, t) => s + t.amount, 0);
+  const avgPerMonth = Math.round(grandTotal / monthCount);
+  
+  // Не помеченные переводы (подсказка)
+  const untaggedTransfers = {};
+  allExcl.filter(tx => tx.reason === 'transfer').forEach(tx => {
+    const m = (tx.merchant || tx.description || '').toUpperCase().trim();
+    if (!businessRules[m]) {
+      const name = tx.merchant || tx.description?.substring(0, 35) || '?';
+      if (!untaggedTransfers[name]) untaggedTransfers[name] = { total: 0, count: 0 };
+      untaggedTransfers[name].total += tx.amount;
+      untaggedTransfers[name].count++;
+    }
+  });
+  const topUntagged = Object.entries(untaggedTransfers).sort((a, b) => b[1].total - a[1].total).slice(0, 5);
+  
+  if (rulesCount === 0 && txs.length === 0) {
+    return `
+      <div class="bg-white rounded-2xl p-8 shadow-sm text-center">
+        <div class="text-6xl mb-4">💼</div>
+        <h3 class="font-semibold text-gray-700 mb-2">Расходы ателье</h3>
+        <p class="text-gray-500 text-sm mb-4">Здесь будут отображаться помеченные бизнес-расходы.<br>Перейдите в <strong>Исключения</strong>, нажмите на получателя и выберите «Расход ателье».</p>
+        <div class="text-left bg-gray-50 rounded-xl p-4 text-sm">
+          <div class="font-semibold mb-2">Категории:</div>
+          ${Object.entries(BIZ_EXPENSE_CATS).map(([k, v]) => 
+            `<div class="py-1">${v.icon} <strong>${v.name}</strong></div>`
+          ).join('')}
+        </div>
+      </div>
+    `;
+  }
+  
+  let html = '';
+  
+  // Общая сводка
+  html += `
+    <div class="bg-gradient-to-r from-purple-500 to-indigo-500 text-white rounded-2xl p-5 shadow-sm mb-4">
+      <div class="text-center mb-3">
+        <div class="text-sm opacity-80">Расходы ателье • ${rulesCount} получателей</div>
+        <div class="text-3xl font-bold mt-1">${formatMoney(grandTotal)}</div>
+        <div class="text-sm opacity-80 mt-1">~${formatMoney(avgPerMonth)} / мес${months.length > 1 ? ' (' + months.length + ' мес.)' : ''}</div>
+      </div>
+      <div class="grid grid-cols-3 gap-2 mt-3">
+        ${Object.entries(BIZ_EXPENSE_CATS).filter(([k]) => byCat[k].total > 0).map(([k, v]) => `
+          <div class="bg-white/15 rounded-xl p-2 text-center">
+            <div class="text-lg">${v.icon}</div>
+            <div class="text-xs opacity-80">${v.name}</div>
+            <div class="font-bold text-sm">${formatMoney(byCat[k].total)}</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+  
+  // Категории детально
+  Object.entries(BIZ_EXPENSE_CATS).forEach(([catKey, catInfo]) => {
+    const cat = byCat[catKey];
+    if (cat.total === 0) return;
+    
+    const catAvg = Math.round(cat.total / monthCount);
+    const sortedRecipients = Object.entries(cat.recipients).sort((a, b) => b[1].total - a[1].total);
+    
+    html += `
+      <div class="bg-white rounded-2xl shadow-sm mb-3 overflow-hidden">
+        <div class="p-4 cursor-pointer" onclick="toggleExclSection('biz_${catKey}')" 
+             style="background: ${catInfo.color}15; border-left: 4px solid ${catInfo.color};">
+          <div class="flex justify-between items-center">
+            <div>
+              <h3 class="font-semibold text-gray-800">${catInfo.icon} ${catInfo.name}</h3>
+              <div class="text-xs text-gray-500">${cat.count} операций • ${sortedRecipients.length} получат. • ~${formatMoney(catAvg)}/мес</div>
+            </div>
+            <div class="text-right">
+              <div class="text-lg font-bold" style="color:${catInfo.color}">${formatMoney(cat.total)}</div>
+            </div>
+          </div>
+        </div>
+        <div id="biz_${catKey}" class="hidden divide-y divide-gray-100">
+          ${sortedRecipients.map(([name, data]) => `
+            <div class="p-3 hover:bg-gray-50 transition flex justify-between items-center">
+              <div>
+                <div class="font-medium text-sm text-gray-800">${name}</div>
+                <div class="text-xs text-gray-400">${data.count} операций</div>
+              </div>
+              <div class="text-right">
+                <div class="font-bold text-gray-800">${formatMoney(data.total)}</div>
+                <div class="text-xs text-gray-500">~${formatMoney(Math.round(data.total / monthCount))}/мес</div>
+              </div>
+            </div>
+          `).join('')}
+          ${months.length > 1 ? `
+          <div class="p-3">
+            <div class="text-xs font-semibold text-gray-500 mb-2">По месяцам:</div>
+            <div class="flex gap-1 flex-wrap">
+              ${months.map(mk => `
+                <div class="text-center px-2 py-1 bg-gray-50 rounded-lg text-xs">
+                  <div class="text-gray-400">${getMonthShortName(mk)}</div>
+                  <div class="font-bold" style="color:${catInfo.color}">${cat.months[mk] ? formatMoney(cat.months[mk]) : '—'}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>` : ''}
+        </div>
+      </div>
+    `;
+  });
+  
+  // Подсказка: непомеченные переводы
+  if (topUntagged.length > 0) {
+    html += `
+      <div class="bg-yellow-50 rounded-2xl p-4 shadow-sm border border-yellow-200 mt-4">
+        <h4 class="font-semibold text-yellow-800 mb-2">💡 Непомеченные переводы</h4>
+        <p class="text-xs text-yellow-700 mb-3">Эти получатели ещё не привязаны к бизнес-категории. Нажмите чтобы пометить.</p>
+        ${topUntagged.map(([name, data]) => `
+          <div class="flex justify-between items-center py-2 border-b border-yellow-100 cursor-pointer hover:bg-yellow-100 rounded-lg px-2 transition"
+               onclick="showExcludedDrill('${name.replace(/'/g, "\\'")}', 'transfer')">
+            <div class="text-sm text-gray-700">${name}</div>
+            <div class="text-sm font-bold text-gray-800">${formatMoney(data.total)}</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+  
+  return html;
+}
 function showMerchantCategoryModal(merchant, currentCategory, txDate, txAmount, txOwner) {
   const allCategories = getUserCategories();
   const hasRule = userCategoryRules[merchant];
@@ -4522,9 +4779,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function autoSync() {
   try {
-    const [txData, exData, rulesData, settingsData] = await Promise.all([
+    const [txData, exData, rulesData, settingsData, bizRulesData] = await Promise.all([
       fetchFromSheets('transactions'), fetchFromSheets('excluded'),
-      fetchFromSheets('rules'), fetchFromSheets('settings')
+      fetchFromSheets('rules'), fetchFromSheets('settings'),
+      fetchFromSheets('bizrules')
     ]);
     
     let changed = false;
@@ -4544,6 +4802,12 @@ async function autoSync() {
       userCategoryRules = { ...userCategoryRules, ...rulesData.data };
       localStorage.setItem('userCategoryRules', JSON.stringify(userCategoryRules));
       if (JSON.stringify(userCategoryRules) !== oldRulesJson) changed = true;
+    }
+    if (bizRulesData && bizRulesData.success && bizRulesData.data && Object.keys(bizRulesData.data).length > 0) {
+      const oldBizJson = JSON.stringify(businessRules);
+      businessRules = { ...businessRules, ...bizRulesData.data };
+      localStorage.setItem('businessRules', JSON.stringify(businessRules));
+      if (JSON.stringify(businessRules) !== oldBizJson) changed = true;
     }
     if (settingsData.success && settingsData.data && Object.keys(settingsData.data).length > 0) {
       applyCloudSettings(settingsData.data);

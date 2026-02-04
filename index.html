@@ -3,548 +3,344 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<meta name="theme-color" content="#5B47B0">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="manifest.json">
-<title>💰 Финансовая система</title>
+<title>Финансовая система</title>
 <style>
 :root {
-  --primary: #6C5CE7;
-  --primary-dark: #5B47B0;
-  --primary-light: #A29BFE;
-  --accent: #00B894;
-  --accent-red: #E17055;
-  --accent-yellow: #FDCB6E;
-  --bg: #F8F9FD;
-  --card: #FFFFFF;
-  --text: #2D3436;
-  --text-secondary: #636E72;
-  --border: #E8ECF1;
-  --shadow: 0 2px 12px rgba(108,92,231,0.08);
-  --radius: 14px;
-  --nav-height: 64px;
+  --primary: #6C5CE7; --primary-light: #A29BFE;
+  --accent-green: #00B894; --accent-red: #E17055; --accent-orange: #FDCB6E;
+  --bg: #F8F9FA; --card: #FFFFFF; --text: #2D3436; --text-secondary: #636E72;
+  --border: #E9ECEF; --radius: 16px;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, Helvetica, sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
-  padding-bottom: calc(var(--nav-height) + 20px);
-  -webkit-font-smoothing: antialiased;
-}
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); padding-bottom: 80px; -webkit-font-smoothing: antialiased; }
 
-/* ═══ HEADER ═══ */
+/* HEADER */
 .app-header {
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-  color: white;
-  padding: 16px 20px 14px;
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  box-shadow: 0 4px 20px rgba(91,71,176,0.3);
+  background: linear-gradient(135deg, #6C5CE7, #A29BFE);
+  color: white; padding: 14px 16px; display: flex; justify-content: space-between; align-items: center;
+  position: sticky; top: 0; z-index: 100;
 }
-.app-header h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; }
-.app-header .subtitle { font-size: 11px; opacity: 0.75; margin-top: 2px; }
-.header-row { display: flex; justify-content: space-between; align-items: center; }
-.header-sync {
-  font-size: 10px; opacity: 0.6; background: rgba(255,255,255,0.15);
-  padding: 3px 8px; border-radius: 8px; cursor: pointer;
+.app-title { font-size: 17px; font-weight: 800; }
+.app-subtitle { font-size: 11px; opacity: 0.8; }
+.header-right { display: flex; align-items: center; gap: 10px; }
+.balance-badge {
+  background: rgba(255,255,255,0.2); padding: 6px 12px; border-radius: 20px;
+  font-size: 12px; font-weight: 700; white-space: nowrap;
 }
-.header-sync:hover { opacity: 0.9; }
+.btn-refresh {
+  background: rgba(255,255,255,0.2); border: none; color: white; width: 36px; height: 36px;
+  border-radius: 50%; font-size: 16px; cursor: pointer;
+}
 
-/* ═══ BOTTOM NAVIGATION ═══ */
+/* BOTTOM NAV */
 .bottom-nav {
-  position: fixed;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: var(--nav-height);
-  background: var(--card);
-  display: flex;
-  justify-content: space-around;
-  align-items: center;
-  border-top: 1px solid var(--border);
-  box-shadow: 0 -4px 20px rgba(0,0,0,0.06);
-  z-index: 200;
-  padding-bottom: env(safe-area-inset-bottom, 0);
+  position: fixed; bottom: 0; left: 0; right: 0; background: white;
+  display: flex; border-top: 1px solid var(--border); z-index: 100;
+  padding-bottom: env(safe-area-inset-bottom);
 }
-.nav-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  cursor: pointer;
-  padding: 6px 16px;
-  border-radius: 12px;
-  transition: all 0.2s;
-  -webkit-tap-highlight-color: transparent;
+.nav-btn {
+  flex: 1; padding: 8px 4px 6px; border: none; background: none; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  color: var(--text-secondary); font-size: 10px; font-weight: 600;
+  transition: color 0.2s;
 }
-.nav-item .nav-icon { font-size: 22px; line-height: 1; }
-.nav-item .nav-label { font-size: 10px; font-weight: 600; color: var(--text-secondary); }
-.nav-item.active { background: rgba(108,92,231,0.08); }
-.nav-item.active .nav-icon { transform: scale(1.1); }
-.nav-item.active .nav-label { color: var(--primary); font-weight: 700; }
+.nav-btn.active { color: var(--primary); }
+.nav-icon { font-size: 22px; }
 
-/* ═══ MAIN TABS ═══ */
-.main-tab { display: none; padding: 16px; animation: fadeIn 0.2s ease; }
+/* TABS */
+.main-tab { display: none; padding: 12px; min-height: calc(100vh - 140px); }
 .main-tab.active { display: block; }
-@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 
-/* ═══ SUB TABS ═══ */
-.sub-tabs {
-  display: flex; gap: 6px; margin-bottom: 16px; overflow-x: auto;
-  -webkit-overflow-scrolling: touch; scrollbar-width: none;
-  padding: 2px 0;
-}
-.sub-tabs::-webkit-scrollbar { display: none; }
-.sub-tab {
-  padding: 8px 16px; font-size: 13px; font-weight: 600; border-radius: 20px;
-  white-space: nowrap; cursor: pointer; border: none;
-  background: var(--card); color: var(--text-secondary);
-  box-shadow: var(--shadow); transition: all 0.2s;
-}
-.sub-tab.active {
-  background: var(--primary); color: white;
-  box-shadow: 0 4px 14px rgba(108,92,231,0.35);
-}
-.sub-content { display: none; animation: fadeIn 0.2s ease; }
-.sub-content.active { display: block; }
-
-/* ═══ CARDS ═══ */
+/* CARDS */
 .card {
-  background: var(--card); border-radius: var(--radius); padding: 18px;
-  box-shadow: var(--shadow); margin-bottom: 14px;
+  background: var(--card); border-radius: var(--radius); padding: 16px; margin-bottom: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
 }
-.card-header { font-size: 14px; font-weight: 700; margin-bottom: 12px; color: var(--text); }
+.card-header { font-size: 15px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
 .card-gradient {
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-  color: white; border-radius: var(--radius); padding: 20px;
-  box-shadow: 0 8px 24px rgba(108,92,231,0.25); margin-bottom: 14px;
+  background: linear-gradient(135deg, #6C5CE7 0%, #A29BFE 100%);
+  color: white; border-radius: var(--radius); padding: 18px; margin-bottom: 12px;
 }
 
-/* ═══ STATS GRID ═══ */
-.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
-.stat-box {
-  background: rgba(255,255,255,0.15); padding: 14px; border-radius: 12px; text-align: center;
+/* PRIORITY CARD (credits) */
+.priority-card { border-left: 4px solid var(--primary); }
+.next-payment {
+  background: #FFF3E0; border-radius: 12px; padding: 14px; margin-bottom: 14px;
+  border-left: 4px solid #FF9800;
 }
-.stat-box .stat-label { font-size: 11px; opacity: 0.8; margin-bottom: 4px; }
-.stat-box .stat-value { font-size: 22px; font-weight: 800; }
-.stat-box .stat-sub { font-size: 10px; opacity: 0.7; margin-top: 2px; }
+.next-payment.urgent { background: #FFEBEE; border-left-color: #F44336; }
+.next-payment.today { background: #FFF3E0; border-left-color: #FF5722; }
+.next-label { font-size: 11px; font-weight: 700; color: #E65100; text-transform: uppercase; letter-spacing: 0.5px; }
+.next-info { font-size: 17px; font-weight: 800; margin: 4px 0 2px; color: var(--text); }
+.next-date { font-size: 12px; color: var(--text-secondary); }
 
-/* ═══ PROGRESS BAR ═══ */
-.progress-wrap { background: rgba(255,255,255,0.2); border-radius: 10px; height: 26px; overflow: hidden; margin-top: 12px; }
+/* PAYMENT ROWS */
+.pay-row {
+  display: flex; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.pay-row:last-child { border-bottom: none; }
+.pay-row.paid { opacity: 0.45; }
+.pay-day { width: 36px; font-weight: 600; color: var(--text-secondary); font-size: 12px; }
+.pay-name { flex: 1; }
+.pay-amount { font-weight: 700; margin-right: 8px; }
+.pay-status { font-size: 14px; }
+
+/* FORECAST BOX */
+.forecast-box { padding: 12px; border-radius: 12px; margin-top: 12px; text-align: center; font-size: 13px; font-weight: 600; }
+.forecast-ok { background: #E8F5E9; color: #2E7D32; }
+.forecast-bad { background: #FFEBEE; color: #C62828; }
+
+/* BIZ SUMMARY */
+.biz-mini { display: flex; gap: 10px; margin-bottom: 10px; }
+.biz-mini-box { flex: 1; background: var(--bg); border-radius: 12px; padding: 12px; text-align: center; }
+.biz-mini-label { font-size: 10px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.3px; }
+.biz-mini-value { font-size: 18px; font-weight: 800; margin-top: 4px; }
+.biz-mini-sub { font-size: 10px; color: var(--text-secondary); margin-top: 2px; }
+.progress-wrap { background: rgba(255,255,255,0.2); border-radius: 10px; height: 26px; overflow: hidden; margin-top: 8px; }
 .progress-fill {
-  height: 100%; display: flex; align-items: center; justify-content: center;
-  font-size: 12px; font-weight: 700; transition: width 0.5s ease;
-  background: linear-gradient(90deg, #00B894 0%, #55EFC4 100%);
+  height: 100%; border-radius: 10px; display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: white; transition: width 0.6s;
+  background: linear-gradient(90deg, #00B894, #55EFC4);
 }
+.progress-bg { background: #E9ECEF; border-radius: 10px; height: 22px; overflow: hidden; }
+.progress-fg { height: 100%; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; color: white; background: var(--primary); transition: width 0.5s; }
 
-/* ═══ FILIAL CARDS ═══ */
-.filials-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
-.filial-card { background: var(--card); border-radius: var(--radius); padding: 16px; box-shadow: var(--shadow); }
-.filial-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 10px; border-bottom: 1px solid var(--border); }
+/* FAMILY SUMMARY */
+.fam-bar { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+
+/* STATS GRID */
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 10px; }
+.stat-box { background: rgba(255,255,255,0.15); padding: 14px; border-radius: 12px; text-align: center; }
+.stat-label { font-size: 10px; opacity: 0.8; text-transform: uppercase; letter-spacing: 0.3px; }
+.stat-value { font-size: 20px; font-weight: 800; margin-top: 4px; }
+.stat-sub { font-size: 10px; opacity: 0.7; margin-top: 2px; }
+
+/* FILIAL CARDS */
+.filial-card { background: var(--card); border-radius: var(--radius); padding: 16px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+.filial-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
 .filial-name { font-size: 14px; font-weight: 700; }
-.filial-rank { font-size: 20px; font-weight: 800; color: var(--primary); }
-.filial-row { display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px; }
-.filial-row .label { color: var(--text-secondary); }
-.filial-row .value { font-weight: 700; }
-.filial-perf {
-  text-align: center; padding: 8px; border-radius: 10px; font-weight: 700;
-  font-size: 13px; margin-top: 10px;
-}
+.filial-rank { background: var(--primary); color: white; font-size: 10px; padding: 3px 8px; border-radius: 10px; font-weight: 700; }
+.filial-row { display: flex; justify-content: space-between; font-size: 13px; padding: 3px 0; }
+.filial-perf { padding: 6px 10px; border-radius: 8px; text-align: center; font-size: 12px; font-weight: 600; margin-top: 8px; }
 .perf-high { background: #D4EDDA; color: #155724; }
 .perf-med { background: #FFF3CD; color: #856404; }
 .perf-low { background: #F8D7DA; color: #721C24; }
 
-/* ═══ CREDIT CARDS ═══ */
-.credit-card {
-  background: var(--card); border-radius: var(--radius); padding: 14px;
-  box-shadow: var(--shadow); margin-bottom: 10px;
-  border-left: 4px solid var(--primary);
-}
-.credit-card.frozen { border-left-color: #B2BEC3; opacity: 0.6; }
-.credit-top { display: flex; justify-content: space-between; align-items: baseline; }
-.credit-name { font-size: 13px; font-weight: 700; }
-.credit-rate { font-size: 12px; color: var(--accent-red); font-weight: 700; }
+/* CREDIT CARDS */
+.credit-card { background: var(--card); border-radius: var(--radius); padding: 16px; margin-bottom: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.06); }
+.credit-card.frozen { opacity: 0.55; }
+.credit-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.credit-name { font-weight: 700; font-size: 14px; }
+.credit-rate { font-size: 13px; font-weight: 700; color: var(--accent-red); }
 .credit-amount { font-size: 20px; font-weight: 800; margin: 6px 0; }
-.credit-row { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
-.credit-progress { height: 4px; background: var(--border); border-radius: 2px; margin-top: 8px; overflow: hidden; }
-.credit-progress-fill { height: 100%; background: var(--accent); border-radius: 2px; transition: width 0.4s; }
+.credit-row { display: flex; justify-content: space-between; font-size: 12px; padding: 3px 0; color: var(--text-secondary); }
+.credit-progress { background: #E9ECEF; height: 6px; border-radius: 3px; margin-top: 10px; }
+.credit-progress-fill { height: 100%; background: var(--accent-green); border-radius: 3px; transition: width 0.4s; }
 
-/* ═══ CALCULATOR ═══ */
-.calc-big {
-  text-align: center; padding: 24px;
-  background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-  color: white; border-radius: var(--radius); margin-bottom: 14px;
-  box-shadow: 0 8px 24px rgba(108,92,231,0.3);
-}
-.calc-big .calc-label { font-size: 13px; opacity: 0.8; margin-bottom: 4px; }
-.calc-big .calc-value { font-size: 36px; font-weight: 800; letter-spacing: -1px; }
-.calc-big .calc-status { font-size: 14px; margin-top: 8px; }
-.calc-breakdown .calc-row {
-  display: flex; justify-content: space-between; padding: 10px 0;
-  border-bottom: 1px solid var(--border); font-size: 13px;
-}
-.calc-breakdown .calc-row:last-child { border: none; }
-.calc-row .positive { color: var(--accent); font-weight: 700; }
-.calc-row .negative { color: var(--accent-red); font-weight: 700; }
+/* MONTH SELECT */
+.month-select { padding: 10px; display: flex; align-items: center; gap: 10px; }
+.month-select select { padding: 8px 12px; border-radius: 10px; border: 1px solid var(--border); font-size: 14px; background: white; }
 
-/* ═══ MONTH SELECTOR ═══ */
-.month-select-wrap {
-  display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
-  background: var(--card); padding: 10px 14px; border-radius: var(--radius);
-  box-shadow: var(--shadow);
-}
-.month-select-wrap label { font-size: 13px; font-weight: 600; }
-.month-select-wrap select {
-  flex: 1; padding: 8px 12px; border: 1px solid var(--border); border-radius: 10px;
-  font-size: 13px; font-weight: 600; background: var(--bg); cursor: pointer;
-}
-.btn-refresh {
-  padding: 8px 14px; background: var(--primary); color: white; border: none;
-  border-radius: 10px; font-size: 12px; font-weight: 600; cursor: pointer;
-}
-
-/* ═══ LOADING / ERROR ═══ */
-.loading-box { text-align: center; padding: 40px 20px; color: var(--text-secondary); }
-.spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top: 3px solid var(--primary);
-  border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 12px; }
+/* LOADING / ERROR */
+.loading-box { text-align: center; padding: 40px; color: var(--text-secondary); }
+.spinner { width: 30px; height: 30px; border: 3px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto; }
 @keyframes spin { to { transform: rotate(360deg); } }
-.error-box { background: #FFF0F0; border-left: 4px solid var(--accent-red); padding: 14px; border-radius: 10px; color: #c0392b; font-size: 13px; margin: 10px 0; }
+.error-box { background: #FFEBEE; color: #C62828; padding: 16px; border-radius: 12px; text-align: center; font-size: 13px; }
 
-/* ═══ FAMILY IFRAME ═══ */
-#tab-family { padding: 0; }
-#tab-family.active { display: block; }
-
-/* ═══ TOAST ═══ */
-.toast {
-  position: fixed; top: 20px; right: 20px; z-index: 9999;
-  background: var(--text); color: white; padding: 12px 20px;
-  border-radius: 12px; font-size: 13px; font-weight: 600;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-  transform: translateX(120%); transition: transform 0.3s ease;
+/* SECTION TOGGLE */
+.section-toggle {
+  display: flex; align-items: center; justify-content: space-between; cursor: pointer;
+  padding: 10px 0; font-size: 14px; font-weight: 700;
 }
-.toast.show { transform: translateX(0); }
+.section-toggle .arrow { transition: transform 0.2s; }
+.section-toggle.open .arrow { transform: rotate(90deg); }
 
-/* ═══ RESPONSIVE ═══ */
-@media (max-width: 420px) {
-  .stats-grid { grid-template-columns: repeat(2, 1fr); }
-  .filials-grid { grid-template-columns: 1fr; }
-  .stat-box .stat-value { font-size: 18px; }
-  .calc-big .calc-value { font-size: 28px; }
-}
+/* FAMILY IFRAME */
+#tab-family iframe { width: 100%; height: calc(100vh - 140px); border: none; border-radius: var(--radius); background: #f3f4f6; }
+
+/* TOAST */
+.toast { position: fixed; top: 70px; left: 50%; transform: translateX(-50%) translateY(-100px); background: #333; color: white; padding: 10px 20px; border-radius: 20px; font-size: 13px; font-weight: 600; z-index: 200; transition: transform 0.3s; pointer-events: none; }
+.toast.show { transform: translateX(-50%) translateY(0); }
 </style>
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════ -->
 <!-- HEADER -->
+<header class="app-header">
+  <div>
+    <div class="app-title">Финансовая система</div>
+    <div class="app-subtitle" id="header-subtitle">v2.0</div>
+  </div>
+  <div class="header-right">
+    <div class="balance-badge" id="balance-badge">На счетах: —</div>
+    <button class="btn-refresh" onclick="refreshAll()" title="Обновить">&#x21bb;</button>
+  </div>
+</header>
+
 <!-- ═══════════════════════════════════════ -->
-<div class="app-header">
-  <div class="header-row">
-    <div>
-      <h1>💰 Финансовая система</h1>
-      <div class="subtitle">Единый контроль • v1.0</div>
+<!-- TAB: ГЛАВНАЯ (overview dashboard) -->
+<!-- ═══════════════════════════════════════ -->
+<div class="main-tab active" id="tab-home">
+
+  <!-- 1. КРЕДИТНЫЕ ПЛАТЕЖИ -->
+  <div class="card priority-card" id="card-payments">
+    <div class="card-header">&#x1F4B3; Платежи &#x2014; <span id="pay-month-name">февраль</span></div>
+    <div id="payments-content"><div class="loading-box"><div class="spinner"></div></div></div>
+  </div>
+
+  <!-- 2. АТЕЛЬЕ -->
+  <div class="card" id="card-biz-summary">
+    <div class="card-header">&#x1F3E2; Ателье &#x2014; <span id="biz-summary-month">январь</span></div>
+    <div id="biz-summary-content"><div class="loading-box"><div class="spinner"></div></div></div>
+  </div>
+
+  <!-- 3. СЕМЬЯ -->
+  <div class="card" id="card-family-summary">
+    <div class="card-header">&#x1F3E0; Семья &#x2014; <span id="fam-summary-month">январь</span></div>
+    <div id="family-summary-content">
+      <div style="font-size:13px; color:var(--text-secondary);">Перейдите на вкладку Семья для загрузки данных</div>
     </div>
-    <div class="header-sync" onclick="loadAllData()" id="syncBadge">🔄 Обновить</div>
+  </div>
+
+  <!-- 4. РАСХОДЫ АТЕЛЬЕ (из семейных выписок) -->
+  <div class="card" id="biz-expenses-card" style="display:none; border-left:4px solid #FDCB6E;">
+  </div>
+
+  <!-- КРЕДИТЫ (сворачиваемый) -->
+  <div class="card">
+    <div class="section-toggle" onclick="toggleSection('credits-detail', this)">
+      <span>&#x1F4B3; Все кредиты (детали)</span>
+      <span class="arrow">&#x25B6;</span>
+    </div>
+    <div id="credits-detail" style="display:none;">
+      <div id="credits-summary-box"></div>
+      <div id="credits-list"></div>
+    </div>
   </div>
 </div>
 
 <!-- ═══════════════════════════════════════ -->
-<!-- TAB: БИЗНЕС -->
+<!-- TAB: БИЗНЕС (detailed) -->
 <!-- ═══════════════════════════════════════ -->
-<div class="main-tab active" id="tab-business">
-  
-  <div class="sub-tabs">
-    <button class="sub-tab active" onclick="switchSubTab('business', 'biz-overview', this)">📊 Обзор</button>
-    <button class="sub-tab" onclick="switchSubTab('business', 'biz-filials', this)">🏪 Филиалы</button>
-    <button class="sub-tab" onclick="switchSubTab('business', 'biz-calendar', this)">📅 Календарь</button>
+<div class="main-tab" id="tab-business">
+  <div class="month-select">
+    <span style="font-weight:600;">Месяц:</span>
+    <select id="bizMonthSelect" onchange="loadBranches()">
+      <option value="1">Январь</option><option value="2">Февраль</option>
+      <option value="3">Март</option><option value="4">Апрель</option>
+      <option value="5">Май</option><option value="6">Июнь</option>
+      <option value="7">Июль</option><option value="8">Август</option>
+      <option value="9">Сентябрь</option><option value="10">Октябрь</option>
+      <option value="11">Ноябрь</option><option value="12">Декабрь</option>
+    </select>
   </div>
-  
-  <!-- Обзор сети -->
-  <div class="sub-content active" id="biz-overview">
-    <div class="month-select-wrap">
-      <label>Месяц:</label>
-      <select id="bizMonthSelect" onchange="loadBranches()">
-        <option value="1">Январь</option><option value="2">Февраль</option>
-        <option value="3">Март</option><option value="4">Апрель</option>
-        <option value="5">Май</option><option value="6">Июнь</option>
-        <option value="7">Июль</option><option value="8">Август</option>
-        <option value="9">Сентябрь</option><option value="10">Октябрь</option>
-        <option value="11">Ноябрь</option><option value="12">Декабрь</option>
-      </select>
-      <button class="btn-refresh" onclick="loadBranches()">🔄</button>
-    </div>
-    
-    <div id="biz-loading" class="loading-box">
-      <div class="spinner"></div>
-      <p>Загрузка данных...</p>
-    </div>
-    
-    <div id="biz-overview-content" style="display:none;">
-      <div class="card-gradient">
-        <div style="text-align:center; font-size:16px; font-weight:700; margin-bottom:14px;">🏢 Сеть из 9 ателье</div>
-        <div class="stats-grid">
-          <div class="stat-box">
-            <div class="stat-label">Ателье</div>
-            <div class="stat-value" id="ov-atelie">—</div>
-            <div class="stat-sub" id="ov-atelie-plan"></div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-label">Химчистка</div>
-            <div class="stat-value" id="ov-himch">—</div>
-            <div class="stat-sub" id="ov-himch-plan"></div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-label">Всего</div>
-            <div class="stat-value" id="ov-total">—</div>
-            <div class="stat-sub" id="ov-total-plan"></div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-label">Клиенты</div>
-            <div class="stat-value" id="ov-clients">—</div>
-            <div class="stat-sub" id="ov-avg-check"></div>
-          </div>
-          <div class="stat-box">
-            <div class="stat-label">Прибыль</div>
-            <div class="stat-value" id="ov-profit">—</div>
-            <div class="stat-sub">чистая</div>
-          </div>
-        </div>
-        <div class="progress-wrap">
-          <div class="progress-fill" id="ov-progress" style="width:0%">0%</div>
-        </div>
+
+  <div id="biz-loading"><div class="loading-box"><div class="spinner"></div><p>Загрузка филиалов...</p></div></div>
+  <div id="biz-error" style="display:none;"></div>
+
+  <div id="biz-overview-content" style="display:none;">
+    <div class="card-gradient">
+      <div style="text-align:center; font-size:16px; font-weight:700; margin-bottom:14px;">Сеть из 9 ателье</div>
+      <div class="stats-grid">
+        <div class="stat-box"><div class="stat-label">Ателье</div><div class="stat-value" id="ov-atelie">&#x2014;</div><div class="stat-sub" id="ov-atelie-plan"></div></div>
+        <div class="stat-box"><div class="stat-label">Химчистка</div><div class="stat-value" id="ov-himch">&#x2014;</div><div class="stat-sub" id="ov-himch-plan"></div></div>
+        <div class="stat-box"><div class="stat-label">Всего</div><div class="stat-value" id="ov-total">&#x2014;</div><div class="stat-sub" id="ov-total-plan"></div></div>
+        <div class="stat-box"><div class="stat-label">Клиенты</div><div class="stat-value" id="ov-clients">&#x2014;</div><div class="stat-sub" id="ov-avg-check"></div></div>
+        <div class="stat-box"><div class="stat-label">Прибыль</div><div class="stat-value" id="ov-profit">&#x2014;</div><div class="stat-sub">чистая</div></div>
       </div>
-    </div>
-    
-    <div id="biz-error" style="display:none;"></div>
-  </div>
-  
-  <!-- Филиалы -->
-  <div class="sub-content" id="biz-filials">
-    <div class="filials-grid" id="filialsGrid"></div>
-  </div>
-  
-  <!-- Календарь -->
-  <div class="sub-content" id="biz-calendar">
-    <div class="card">
-      <div class="card-header">📅 Календарь отчётов</div>
-      <p style="font-size:13px; color:var(--text-secondary);">
-        Здесь будет календарь отчётов портных (9 филиалов × дни месяца).<br>
-        🟢 отчёт получен • 🔴 нет отчёта • ⚪ день не наступил • 🟡 ожидается<br><br>
-        <em>Реализация — после подключения Telegram бота (Фаза 2+)</em>
-      </p>
+      <div class="progress-wrap"><div class="progress-fill" id="ov-progress" style="width:0%">0%</div></div>
     </div>
   </div>
+
+  <div id="filialsGrid"></div>
 </div>
 
 <!-- ═══════════════════════════════════════ -->
-<!-- TAB: СЕМЬЯ -->
+<!-- TAB: СЕМЬЯ (iframe) -->
 <!-- ═══════════════════════════════════════ -->
 <div class="main-tab" id="tab-family">
-  <iframe id="familyFrame" src="family.html?embedded=1" style="
-    width: 100%;
-    height: calc(100vh - var(--nav-height) - 8px);
-    border: none;
-    border-radius: var(--radius);
-    background: #f3f4f6;
-  "></iframe>
+  <iframe id="familyFrame" src="family.html?embedded=1" style="width:100%; height:calc(100vh - 140px); border:none; border-radius:var(--radius); background:#f3f4f6;"></iframe>
 </div>
 
-
-<!-- ═══════════════════════════════════════ -->
-<!-- TAB: АНАЛИТИКА -->
-<!-- ═══════════════════════════════════════ -->
-<div class="main-tab" id="tab-analytics">
-  
-  <div class="sub-tabs">
-    <button class="sub-tab active" onclick="switchSubTab('analytics', 'an-calc', this)">🧮 Калькулятор</button>
-    <button class="sub-tab" onclick="switchSubTab('analytics', 'an-credits', this)">💳 Кредиты</button>
-  </div>
-  
-  <!-- Калькулятор -->
-  <div class="sub-content active" id="an-calc">
-    <div class="calc-big">
-      <div class="calc-label">Свободных денег</div>
-      <div class="calc-value" id="calc-free">—</div>
-      <div class="calc-status" id="calc-status"></div>
-    </div>
-    
-    <div class="card">
-      <div class="card-header">📊 Откуда берётся</div>
-      <div class="calc-breakdown" id="calc-breakdown">
-        <div class="calc-row">
-          <span>Баланс счетов</span>
-          <span class="positive" id="calc-balance">—</span>
-        </div>
-        <div class="calc-row">
-          <span>+ Прогноз дохода (остаток месяца)</span>
-          <span class="positive" id="calc-income">—</span>
-        </div>
-        <div class="calc-row">
-          <span>− Расходы на семью (прогноз)</span>
-          <span class="negative" id="calc-family">—</span>
-        </div>
-        <div class="calc-row">
-          <span>− Кредитные платежи (оставшиеся)</span>
-          <span class="negative" id="calc-credits-pay">—</span>
-        </div>
-        <div class="calc-row">
-          <span>− Аренда</span>
-          <span class="negative" id="calc-rent">—</span>
-        </div>
-      </div>
-    </div>
-    
-    <div class="card">
-      <div class="card-header">📅 Ближайшие платежи</div>
-      <div id="upcoming-payments">
-        <div class="loading-box"><div class="spinner"></div><p>Загрузка...</p></div>
-      </div>
-    </div>
-  </div>
-  
-  <!-- Кредиты -->
-  <div class="sub-content" id="an-credits">
-    <!-- Общая сводка -->
-    <div class="card-gradient" id="credits-summary">
-      <div style="text-align:center; font-size:16px; font-weight:700; margin-bottom:12px;">💳 Кредитная нагрузка</div>
-      <div class="stats-grid">
-        <div class="stat-box">
-          <div class="stat-label">Общий долг</div>
-          <div class="stat-value" id="cr-total-debt" style="font-size:18px;">—</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Платежи /мес</div>
-          <div class="stat-value" id="cr-monthly-pay" style="font-size:18px;">—</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Активных</div>
-          <div class="stat-value" id="cr-active-count">—</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-label">Закрываем в 2026</div>
-          <div class="stat-value" id="cr-close-count">—</div>
-        </div>
-      </div>
-      <div class="progress-wrap">
-        <div class="progress-fill" id="cr-progress" style="width:0%;">0%</div>
-      </div>
-      <div style="text-align:center; font-size:11px; opacity:0.7; margin-top:6px;" id="cr-progress-label"></div>
-    </div>
-    
-    <!-- Список кредитов -->
-    <div id="credits-list"></div>
-  </div>
-</div>
-
-<!-- ═══════════════════════════════════════ -->
-<!-- BOTTOM NAVIGATION -->
-<!-- ═══════════════════════════════════════ -->
+<!-- BOTTOM NAV -->
 <nav class="bottom-nav">
-  <div class="nav-item active" onclick="switchMainTab('business', this)">
-    <span class="nav-icon">🏢</span>
-    <span class="nav-label">Бизнес</span>
-  </div>
-  <div class="nav-item" onclick="switchMainTab('family', this)">
-    <span class="nav-icon">👨‍👩‍👧</span>
-    <span class="nav-label">Семья</span>
-  </div>
-  <div class="nav-item" onclick="switchMainTab('analytics', this)">
-    <span class="nav-icon">📊</span>
-    <span class="nav-label">Аналитика</span>
-  </div>
+  <button class="nav-btn active" onclick="switchTab('home', this)" id="nav-home">
+    <span class="nav-icon">&#x1F3E0;</span>Главная
+  </button>
+  <button class="nav-btn" onclick="switchTab('business', this)" id="nav-business">
+    <span class="nav-icon">&#x1F3E2;</span>Бизнес
+  </button>
+  <button class="nav-btn" onclick="switchTab('family', this)" id="nav-family">
+    <span class="nav-icon">&#x1F45B;</span>Семья
+  </button>
 </nav>
 
-<!-- TOAST -->
 <div class="toast" id="toast"></div>
 
 <script>
 // ═══════════════════════════════════════════════════════════════
-// КОНФИГУРАЦИЯ
+// API & CONSTANTS
 // ═══════════════════════════════════════════════════════════════
 
-// ⚠️ ЗАМЕНИТЬ НА РЕАЛЬНЫЙ URL НОВОГО APPS SCRIPT
 const API_URL = 'https://script.google.com/macros/s/AKfycbxfN2eYhdWamLmTuR6I4unWFpNA4iOD5QxzaKWASZmW6G8El_FWk3vOi1wE7x4AUNasVA/exec';
-
-// Старый URL dashboard (fallback, пока не развёрнут новый)
 const DASHBOARD_API_URL = 'https://script.google.com/macros/s/AKfycbwyjWBnlCZFMbjkcggsMQWuhaxUzNkxG2_QStfSqf3sSoeNlkF424ykPbrxgwtg2sA/exec';
+const MONTH_NAMES = ['', 'январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+const MONTH_NAMES_CAP = ['', 'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 
 // ═══════════════════════════════════════════════════════════════
 // STATE
 // ═══════════════════════════════════════════════════════════════
 
 let appState = {
-  credits: [],
-  settings: {},
-  balances: [],
-  forecast: [],
-  branchData: null,
-  currentBizMonth: new Date().getMonth() + 1,
-  dataLoaded: false
+  credits: [], balances: [], settings: {}, forecast: [],
+  branchData: null, familySummary: null, dataLoaded: false
 };
 
 // ═══════════════════════════════════════════════════════════════
-// НАВИГАЦИЯ
+// DATA LOADING
 // ═══════════════════════════════════════════════════════════════
 
-function switchMainTab(tabName, el) {
-  document.querySelectorAll('.main-tab').forEach(t => t.classList.remove('active'));
-  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
-  document.getElementById('tab-' + tabName).classList.add('active');
-  if (el) el.classList.add('active');
+async function fetchWithTimeout(url, timeout = 10000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeout);
+  const response = await fetch(url, { signal: controller.signal });
+  clearTimeout(id);
+  return response;
 }
-
-function switchSubTab(group, subId, el) {
-  const parent = el.closest('.main-tab');
-  parent.querySelectorAll('.sub-content').forEach(s => s.classList.remove('active'));
-  parent.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
-  document.getElementById(subId).classList.add('active');
-  el.classList.add('active');
-}
-
-// ═══════════════════════════════════════════════════════════════
-// ЗАГРУЗКА ДАННЫХ
-// ═══════════════════════════════════════════════════════════════
 
 async function loadAllData() {
-  showToast('🔄 Загрузка данных...');
-  
+  showToast('Загрузка...');
   try {
-    // Пробуем новый API
     const res = await fetchWithTimeout(API_URL + '?action=getAll', 15000);
     const data = await res.json();
-    
     if (data.success) {
       if (data.credits) appState.credits = data.credits;
       if (data.settings) appState.settings = data.settings;
       if (data.balances) appState.balances = data.balances;
       if (data.forecast) appState.forecast = data.forecast;
       appState.dataLoaded = true;
-      
-      renderCredits();
-      renderCalculator();
-      showToast('✅ Данные загружены');
+      showToast('Данные загружены');
     }
   } catch (err) {
-    console.warn('New API not available, using defaults:', err.message);
-    // Используем значения по умолчанию
+    console.warn('API error, using defaults:', err.message);
     loadDefaults();
-    renderCredits();
-    renderCalculator();
-    showToast('⚠️ Используем кэш');
+    showToast('Используем кэш');
   }
-  
-  // Загружаем филиалы отдельно (через старый или новый API)
+
+  // Рендерим главную
+  renderOverview();
+  renderCreditsDetail();
+
+  // Фоновая загрузка филиалов
   loadBranches();
 }
 
 function loadDefaults() {
   appState.credits = [
     { name: 'Т-Банк 27.3%', rate: 0.273, balanceInit: 1784581, balanceCurrent: 1784581, payment: 98650, paymentDay: 5, closeDate: 'Авг 2026', priority: 1, status: 'Активный' },
-    { name: 'Сбербанк 25.4%', rate: 0.254, balanceInit: 256000, balanceCurrent: 256000, payment: 2309, paymentDay: 10, closeDate: '', priority: 0, status: '⚠️ ЗАМОРОЖЕН' },
+    { name: 'Сбербанк 25.4%', rate: 0.254, balanceInit: 256000, balanceCurrent: 256000, payment: 2309, paymentDay: 10, closeDate: '', priority: 0, status: 'ЗАМОРОЖЕН' },
     { name: 'К4 Физлицо', rate: 0.25, balanceInit: 397000, balanceCurrent: 397000, payment: 25000, paymentDay: 15, closeDate: 'Сен 2026', priority: 3, status: 'Активный' },
     { name: 'К3 Физлицо', rate: 0.25, balanceInit: 225000, balanceCurrent: 225000, payment: 20000, paymentDay: 0, closeDate: 'Окт 2026', priority: 4, status: 'Активный' },
     { name: 'К2 Физлицо', rate: 0.25, balanceInit: 474000, balanceCurrent: 474000, payment: 20000, paymentDay: 0, closeDate: 'Окт 2026', priority: 5, status: 'Активный' },
@@ -556,95 +352,252 @@ function loadDefaults() {
     { name: 'Ипотека', rate: 0.001, balanceInit: 8931119, balanceCurrent: 8931119, payment: 28200, paymentDay: 0, closeDate: 'Не в 2026', priority: 11, status: 'Активный' },
     { name: 'Рассрочка', rate: 0.0, balanceInit: 246800, balanceCurrent: 246800, payment: 61600, paymentDay: 0, closeDate: 'Апр 2026', priority: 12, status: 'Активный' }
   ];
-  
-  appState.settings = {
-    'маржа_ателье': 0.5, 'маржа_химчистка': 0.4, 'аренда_всего': 396000,
-    'кредитная_линия': 100000, 'расходы_семья': 300000, 'порог_крупных': 40000
-  };
-  
+  appState.settings = { 'маржа_ателье': 0.5, 'маржа_химчистка': 0.4, 'аренда_всего': 396000, 'расходы_семья': 354000 };
   appState.forecast = [
-    { month: 1, income: 510263, obligations: 402327 },
-    { month: 2, income: 488051, obligations: 402327 },
-    { month: 3, income: 916641, obligations: 402327 },
-    { month: 4, income: 928138, obligations: 402327 },
-    { month: 5, income: 941033, obligations: 341127 },
-    { month: 6, income: 917548, obligations: 340727 },
-    { month: 7, income: 674080, obligations: 340727 },
-    { month: 8, income: 794772, obligations: 340727 },
-    { month: 9, income: 798438, obligations: 242065 },
-    { month: 10, income: 878332, obligations: 222598 },
-    { month: 11, income: 908278, obligations: 178820 },
-    { month: 12, income: 895996, obligations: 169385 }
+    { month: 1, income: 510263, obligations: 402327 }, { month: 2, income: 488051, obligations: 402327 },
+    { month: 3, income: 916641, obligations: 402327 }, { month: 4, income: 928138, obligations: 402327 },
+    { month: 5, income: 941033, obligations: 341127 }, { month: 6, income: 917548, obligations: 340727 },
+    { month: 7, income: 674080, obligations: 340727 }, { month: 8, income: 794772, obligations: 340727 },
+    { month: 9, income: 798438, obligations: 242065 }, { month: 10, income: 878332, obligations: 222598 },
+    { month: 11, income: 908278, obligations: 178820 }, { month: 12, income: 895996, obligations: 169385 }
   ];
-  
   appState.dataLoaded = true;
 }
 
 async function loadBranches() {
-  const month = document.getElementById('bizMonthSelect').value;
-  
-  document.getElementById('biz-loading').style.display = 'block';
-  document.getElementById('biz-overview-content').style.display = 'none';
-  document.getElementById('biz-error').style.display = 'none';
-  
+  const month = document.getElementById('bizMonthSelect') ? document.getElementById('bizMonthSelect').value : (new Date().getMonth() + 1);
+
+  const loadEl = document.getElementById('biz-loading');
+  const overEl = document.getElementById('biz-overview-content');
+  const errEl = document.getElementById('biz-error');
+  if (loadEl) loadEl.style.display = 'block';
+  if (overEl) overEl.style.display = 'none';
+  if (errEl) errEl.style.display = 'none';
+
   try {
-    // Пробуем новый API, потом старый
-    let url = API_URL + '?action=getBranches&month=' + month;
     let res;
-    
-    try {
-      res = await fetchWithTimeout(url, 12000);
-    } catch {
-      // Fallback на старый dashboard API
-      res = await fetchWithTimeout(DASHBOARD_API_URL + '?month=' + month, 12000);
-    }
-    
+    try { res = await fetchWithTimeout(API_URL + '?action=getBranches&month=' + month, 12000); }
+    catch { res = await fetchWithTimeout(DASHBOARD_API_URL + '?month=' + month, 12000); }
     const data = await res.json();
-    
     if (data.error) throw new Error(data.error);
-    
+
     appState.branchData = data;
     renderBizOverview(data);
     renderFilials(data);
-    
-    document.getElementById('biz-loading').style.display = 'none';
-    document.getElementById('biz-overview-content').style.display = 'block';
-    
+    renderBizSummaryCard(data); // update overview card
+
+    if (loadEl) loadEl.style.display = 'none';
+    if (overEl) overEl.style.display = 'block';
   } catch (err) {
-    document.getElementById('biz-loading').style.display = 'none';
-    document.getElementById('biz-error').style.display = 'block';
-    document.getElementById('biz-error').innerHTML = `<div class="error-box">⚠️ ${err.message}</div>`;
+    if (loadEl) loadEl.style.display = 'none';
+    if (errEl) { errEl.style.display = 'block'; errEl.innerHTML = '<div class="error-box">' + err.message + '</div>'; }
   }
 }
 
-async function fetchWithTimeout(url, timeout = 10000) {
-  const controller = new AbortController();
-  const id = setTimeout(() => controller.abort(), timeout);
-  const response = await fetch(url, { signal: controller.signal });
-  clearTimeout(id);
-  return response;
+// ═══════════════════════════════════════════════════════════════
+// RENDER: OVERVIEW (TAB 1)
+// ═══════════════════════════════════════════════════════════════
+
+function renderOverview() {
+  const now = new Date();
+  const cm = now.getMonth() + 1;
+
+  // Update month labels
+  document.getElementById('pay-month-name').textContent = MONTH_NAMES[cm];
+  document.getElementById('biz-summary-month').textContent = MONTH_NAMES[cm === 1 ? 1 : cm - 1]; // last complete month or current
+  document.getElementById('fam-summary-month').textContent = MONTH_NAMES[cm];
+
+  // Balance badge
+  updateBalanceBadge();
+
+  // #1 Credit payments
+  renderPaymentsCard();
+
+  // #3 Family placeholder
+  renderFamilyCard();
+}
+
+function updateBalanceBadge() {
+  const debit = appState.balances.filter(b => b.type === 'Дебет' || b.type === 'РСч');
+  const total = debit.reduce((s, b) => s + (b.balance || 0), 0);
+  const badge = document.getElementById('balance-badge');
+
+  if (total > 0) {
+    const d = new Date();
+    const dateStr = String(d.getDate()).padStart(2, '0') + '.' + String(d.getMonth() + 1).padStart(2, '0');
+    badge.textContent = fmtShort(total) + ' (' + dateStr + ')';
+  } else {
+    badge.textContent = 'На счетах: нет данных';
+  }
+}
+
+// ───────── #1: КРЕДИТНЫЕ ПЛАТЕЖИ ─────────
+function renderPaymentsCard() {
+  const now = new Date();
+  const today = now.getDate();
+  const cm = now.getMonth() + 1;
+  const daysInMonth = new Date(now.getFullYear(), cm, 0).getDate();
+
+  const active = appState.credits.filter(c => c.status === 'Активный');
+  const frozen = appState.credits.filter(c => (c.status || '').includes('ЗАМОРОЖЕН'));
+
+  // Платежи с известной датой
+  const withDay = active.filter(c => c.paymentDay > 0).map(c => ({
+    name: c.name, amount: c.payment, day: c.paymentDay,
+    isPast: c.paymentDay < today, isToday: c.paymentDay === today,
+    daysUntil: c.paymentDay >= today ? c.paymentDay - today : daysInMonth - today + c.paymentDay
+  })).sort((a, b) => a.day - b.day);
+
+  // Без даты
+  const noDay = active.filter(c => !c.paymentDay || c.paymentDay === 0);
+  const noDayTotal = noDay.reduce((s, c) => s + c.payment, 0);
+
+  const totalMonthly = active.reduce((s, c) => s + c.payment, 0);
+  const remaining = withDay.filter(p => !p.isPast).reduce((s, p) => s + p.amount, 0) + noDayTotal;
+
+  // Баланс
+  const totalBalance = appState.balances.filter(b => b.type === 'Дебет' || b.type === 'РСч').reduce((s, b) => s + (b.balance || 0), 0);
+
+  // Прогноз дохода до конца месяца
+  const fc = appState.forecast.find(f => f.month === cm) || {};
+  const monthProgress = today / daysInMonth;
+  const remainingIncome = Math.round((fc.income || 0) * (1 - monthProgress));
+
+  const available = totalBalance + remainingIncome;
+  const afterPayments = available - remaining;
+  const enough = afterPayments >= 0;
+
+  // Ближайший платёж
+  const next = withDay.find(p => !p.isPast);
+
+  let html = '';
+
+  // Карточка ближайшего
+  if (next) {
+    const cls = next.daysUntil === 0 ? 'today' : next.daysUntil <= 2 ? 'urgent' : '';
+    const when = next.isToday ? 'СЕГОДНЯ!' : (next.daysUntil === 1 ? 'завтра' : 'через ' + next.daysUntil + ' дн.');
+    html += '<div class="next-payment ' + cls + '">';
+    html += '<div class="next-label">Ближайший платёж</div>';
+    html += '<div class="next-info">' + next.name + ' &#x2014; ' + fmt(next.amount) + '</div>';
+    html += '<div class="next-date">' + next.day + ' ' + MONTH_NAMES[cm] + ' &#x2022; ' + when + '</div>';
+    html += '</div>';
+  }
+
+  // Все платежи
+  html += '<div style="margin-bottom:8px;">';
+  withDay.forEach(function(p) {
+    var status = p.isPast ? '&#x2705;' : (p.isToday ? '&#x1F534;' : '&#x23F3;');
+    var cls = p.isPast ? 'paid' : '';
+    html += '<div class="pay-row ' + cls + '">';
+    html += '<span class="pay-day">' + p.day + '-е</span>';
+    html += '<span class="pay-name">' + p.name + '</span>';
+    html += '<span class="pay-amount">' + fmt(p.amount) + '</span>';
+    html += '<span class="pay-status">' + status + '</span>';
+    html += '</div>';
+  });
+
+  if (noDay.length > 0) {
+    html += '<div class="pay-row" style="opacity:0.6;">';
+    html += '<span class="pay-day">&#x2014;</span>';
+    html += '<span class="pay-name">' + noDay.length + ' без указанной даты</span>';
+    html += '<span class="pay-amount">' + fmtShort(noDayTotal) + '</span>';
+    html += '<span class="pay-status">&#x1F4C5;</span>';
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // Итого + прогноз
+  html += '<div style="background:var(--bg); border-radius:12px; padding:12px; font-size:13px;">';
+  html += '<div style="display:flex; justify-content:space-between; margin-bottom:4px;"><span>Итого в ' + MONTH_NAMES[cm] + 'е:</span><strong>' + fmtShort(totalMonthly) + '</strong></div>';
+  html += '<div style="display:flex; justify-content:space-between; margin-bottom:8px;"><span>Осталось заплатить:</span><strong>' + fmtShort(remaining) + '</strong></div>';
+
+  html += '<div class="forecast-box ' + (enough ? 'forecast-ok' : 'forecast-bad') + '">';
+  if (enough) {
+    html += '&#x2705; Хватает. После платежей: ' + fmtShort(afterPayments);
+  } else {
+    html += '&#x274C; Не хватает! Дефицит: ' + fmtShort(Math.abs(afterPayments));
+  }
+  if (totalBalance > 0 && remainingIncome > 0) {
+    html += '<div style="font-size:11px; margin-top:4px; opacity:0.8;">Счета ' + fmtShort(totalBalance) + ' + прогноз дохода ' + fmtShort(remainingIncome) + '</div>';
+  }
+  html += '</div>';
+  html += '</div>';
+
+  document.getElementById('payments-content').innerHTML = html;
+}
+
+// ───────── #2: БИЗНЕС СВОДКА ─────────
+function renderBizSummaryCard(data) {
+  if (!data || !data.totals) {
+    document.getElementById('biz-summary-content').innerHTML = '<div style="color:var(--text-secondary); font-size:13px;">Загрузка...</div>';
+    return;
+  }
+
+  const t = data.totals;
+  const pct = t.performance ? t.performance.total : 0;
+  const pctColor = pct >= 95 ? 'var(--accent-green)' : pct >= 80 ? '#F39C12' : 'var(--accent-red)';
+  const monthName = data.monthName || MONTH_NAMES_CAP[data.currentMonth || 1];
+
+  document.getElementById('biz-summary-month').textContent = monthName.toLowerCase();
+
+  let html = '';
+  html += '<div class="biz-mini">';
+  html += '<div class="biz-mini-box"><div class="biz-mini-label">Выручка</div><div class="biz-mini-value">' + fmtShort(t.fact.total) + '</div><div class="biz-mini-sub">план ' + fmtShort(t.plan.total) + '</div></div>';
+  html += '<div class="biz-mini-box"><div class="biz-mini-label">Прибыль</div><div class="biz-mini-value" style="color:var(--accent-green);">' + fmtShort(t.fact.profit) + '</div><div class="biz-mini-sub">' + (t.fact.clients || 0) + ' клиентов</div></div>';
+  html += '<div class="biz-mini-box"><div class="biz-mini-label">План</div><div class="biz-mini-value" style="color:' + pctColor + ';">' + pct + '%</div><div class="biz-mini-sub">выполнения</div></div>';
+  html += '</div>';
+
+  html += '<div class="progress-bg"><div class="progress-fg" style="width:' + Math.min(pct, 100) + '%; background:' + pctColor + ';">' + pct + '%</div></div>';
+
+  document.getElementById('biz-summary-content').innerHTML = html;
+}
+
+// ───────── #3: СЕМЬЯ СВОДКА ─────────
+function renderFamilyCard() {
+  if (!appState.familySummary) {
+    document.getElementById('family-summary-content').innerHTML = '<div style="font-size:13px; color:var(--text-secondary);">Данные загружаются в фоне...</div>';
+    return;
+  }
+
+  const fs = appState.familySummary;
+  const spent = fs.spent || 0;
+  const budget = fs.budget || (appState.settings['расходы_семья'] || 354000);
+  const over = spent > budget;
+  const pct = budget > 0 ? Math.round(spent / budget * 100) : 0;
+  const diff = Math.abs(spent - budget);
+
+  let html = '';
+  html += '<div class="fam-bar"><span>Потрачено</span><span><strong>' + fmtShort(spent) + '</strong> / ' + fmtShort(budget) + '</span></div>';
+  html += '<div class="progress-bg" style="margin-bottom:8px;"><div class="progress-fg" style="width:' + Math.min(pct, 100) + '%; background:' + (over ? 'var(--accent-red)' : 'var(--accent-green)') + ';">' + pct + '%</div></div>';
+
+  if (over) {
+    html += '<div style="text-align:center; font-size:13px; color:var(--accent-red); font-weight:600;">Перерасход: ' + fmtShort(diff) + '</div>';
+  } else {
+    html += '<div style="text-align:center; font-size:13px; color:var(--accent-green); font-weight:600;">В запасе: ' + fmtShort(diff) + '</div>';
+  }
+
+  document.getElementById('family-summary-content').innerHTML = html;
 }
 
 // ═══════════════════════════════════════════════════════════════
-// РЕНДЕР: БИЗНЕС
+// RENDER: BUSINESS DETAIL (TAB 2)
 // ═══════════════════════════════════════════════════════════════
 
 function renderBizOverview(data) {
   const t = data.totals;
-  
   document.getElementById('ov-atelie').textContent = fmt(t.fact.atelie);
   document.getElementById('ov-himch').textContent = fmt(t.fact.himchistka);
   document.getElementById('ov-total').textContent = fmt(t.fact.total);
   document.getElementById('ov-clients').textContent = t.fact.clients.toLocaleString('ru-RU');
   document.getElementById('ov-profit').textContent = fmt(t.fact.profit);
-  
+
   if (t.plan.total > 0) {
-    document.getElementById('ov-atelie-plan').textContent = `План: ${fmt(t.plan.atelie)} (${t.performance.atelie}%)`;
-    document.getElementById('ov-himch-plan').textContent = `План: ${fmt(t.plan.himchistka)} (${t.performance.himchistka}%)`;
-    document.getElementById('ov-total-plan').textContent = `План: ${fmt(t.plan.total)} (${t.performance.total}%)`;
+    document.getElementById('ov-atelie-plan').textContent = 'План: ' + fmt(t.plan.atelie) + ' (' + t.performance.atelie + '%)';
+    document.getElementById('ov-himch-plan').textContent = 'План: ' + fmt(t.plan.himchistka) + ' (' + t.performance.himchistka + '%)';
+    document.getElementById('ov-total-plan').textContent = 'План: ' + fmt(t.plan.total) + ' (' + t.performance.total + '%)';
   }
-  if (t.fact.avgCheck) document.getElementById('ov-avg-check').textContent = `Ср.чек: ${fmt(t.fact.avgCheck)}`;
-  
+  if (t.fact.avgCheck) document.getElementById('ov-avg-check').textContent = 'Ср.чек: ' + fmt(t.fact.avgCheck);
+
   const pct = t.performance ? Math.min(t.performance.total, 100) : 0;
   document.getElementById('ov-progress').style.width = pct + '%';
   document.getElementById('ov-progress').textContent = (t.performance ? t.performance.total : 0) + '%';
@@ -653,253 +606,182 @@ function renderBizOverview(data) {
 function renderFilials(data) {
   const grid = document.getElementById('filialsGrid');
   grid.innerHTML = '';
-  
   const sorted = [...data.filials].sort((a, b) => b.fact.total - a.fact.total);
-  
-  sorted.forEach((f, i) => {
+
+  sorted.forEach(function(f, i) {
     const rank = i + 1;
     const perf = f.performance.total;
-    let perfClass = 'perf-low', perfEmoji = '🔴';
-    if (perf >= 95) { perfClass = 'perf-high'; perfEmoji = '🟢'; }
-    else if (perf >= 85) { perfClass = 'perf-med'; perfEmoji = '🟡'; }
-    
+    let perfClass = 'perf-low';
+    if (perf >= 95) perfClass = 'perf-high';
+    else if (perf >= 85) perfClass = 'perf-med';
+
     let forecastHtml = '';
     if (f.forecast) {
-      const pEmoji = f.forecast.probability === 'high' ? '🟢' : f.forecast.probability === 'medium' ? '🟡' : '🔴';
-      forecastHtml = `
-        <div style="background:var(--bg); padding:10px; border-radius:10px; margin-top:10px; font-size:12px; border-left:3px solid var(--primary);">
-          <strong>🎯 Прогноз:</strong> ${fmt(f.forecast.total)} ${pEmoji}
-          <div style="font-size:10px; color:var(--text-secondary); margin-top:2px;">Дней прошло: ${f.forecast.daysPassed} | Осталось: ${f.forecast.daysLeft}</div>
-        </div>`;
+      const pEmoji = f.forecast.probability === 'high' ? '&#x1F7E2;' : f.forecast.probability === 'medium' ? '&#x1F7E1;' : '&#x1F534;';
+      forecastHtml = '<div style="background:var(--bg); padding:10px; border-radius:10px; margin-top:10px; font-size:12px; border-left:3px solid var(--primary);"><strong>Прогноз:</strong> ' + fmt(f.forecast.total) + ' ' + pEmoji + '<div style="font-size:10px; color:var(--text-secondary); margin-top:2px;">Дней: ' + f.forecast.daysPassed + '/' + (f.forecast.daysPassed + f.forecast.daysLeft) + '</div></div>';
     }
-    
-    grid.innerHTML += `
-      <div class="filial-card">
-        <div class="filial-top">
-          <div class="filial-name">${f.name}</div>
-          <div class="filial-rank">#${rank}</div>
-        </div>
-        <div class="filial-row"><span class="label">Ателье:</span><span class="value">${fmt(f.fact.atelie)}</span></div>
-        <div style="font-size:10px; color:var(--text-secondary); margin-bottom:6px;">План: ${fmt(f.plan.atelie)} (${f.performance.atelie}%)</div>
-        <div class="filial-row"><span class="label">Химчистка:</span><span class="value">${fmt(f.fact.himchistka)}</span></div>
-        <div style="font-size:10px; color:var(--text-secondary); margin-bottom:6px;">План: ${fmt(f.plan.himchistka)} (${f.performance.himchistka}%)</div>
-        <div class="filial-row"><span class="label"><strong>ИТОГО:</strong></span><span class="value"><strong>${fmt(f.fact.total)}</strong></span></div>
-        <div class="filial-perf ${perfClass}">${perfEmoji} ${perf}% от плана</div>
-        <div style="background:#E7F3FF; padding:8px; border-radius:8px; margin-top:8px; font-size:11px;">
-          <div style="display:flex; justify-content:space-between;"><span>👥 Клиенты:</span><strong>${f.fact.clients}</strong></div>
-          <div style="display:flex; justify-content:space-between;"><span>💰 Ср.чек:</span><strong>${fmt(f.fact.avgCheck)}</strong></div>
-          <div style="display:flex; justify-content:space-between;"><span>✅ Прибыль:</span><strong>${fmt(f.fact.profit)}</strong></div>
-        </div>
-        ${forecastHtml}
-      </div>`;
+
+    grid.innerHTML += '<div class="filial-card">' +
+      '<div class="filial-top"><div class="filial-name">' + f.name + '</div><div class="filial-rank">#' + rank + '</div></div>' +
+      '<div class="filial-row"><span>Ателье:</span><span>' + fmt(f.fact.atelie) + '</span></div>' +
+      '<div style="font-size:10px; color:var(--text-secondary); margin-bottom:6px;">План: ' + fmt(f.plan.atelie) + ' (' + f.performance.atelie + '%)</div>' +
+      '<div class="filial-row"><span>Химчистка:</span><span>' + fmt(f.fact.himchistka) + '</span></div>' +
+      '<div style="font-size:10px; color:var(--text-secondary); margin-bottom:6px;">План: ' + fmt(f.plan.himchistka) + ' (' + f.performance.himchistka + '%)</div>' +
+      '<div class="filial-row"><span><strong>ИТОГО:</strong></span><span><strong>' + fmt(f.fact.total) + '</strong></span></div>' +
+      '<div class="filial-perf ' + perfClass + '">' + perf + '% от плана</div>' +
+      '<div style="background:#E7F3FF; padding:8px; border-radius:8px; margin-top:8px; font-size:11px;">' +
+        '<div style="display:flex; justify-content:space-between;"><span>Клиенты:</span><strong>' + f.fact.clients + '</strong></div>' +
+        '<div style="display:flex; justify-content:space-between;"><span>Ср.чек:</span><strong>' + fmt(f.fact.avgCheck) + '</strong></div>' +
+        '<div style="display:flex; justify-content:space-between;"><span>Прибыль:</span><strong>' + fmt(f.fact.profit) + '</strong></div>' +
+      '</div>' + forecastHtml + '</div>';
   });
 }
 
 // ═══════════════════════════════════════════════════════════════
-// РЕНДЕР: КРЕДИТЫ
+// RENDER: CREDITS DETAIL (expandable section in Tab 1)
 // ═══════════════════════════════════════════════════════════════
 
-function renderCredits() {
+function renderCreditsDetail() {
   const credits = appState.credits;
   if (!credits.length) return;
-  
+
   const active = credits.filter(c => c.status === 'Активный');
-  const totalDebt = active.reduce((s, c) => s + (c.balanceCurrent || c.balanceInit), 0);
-  const monthlyPay = active.reduce((s, c) => s + c.payment, 0);
-  const closingIn2026 = credits.filter(c => c.closeDate && !c.closeDate.includes('Не в') && c.status === 'Активный').length;
-  const initialDebt = 19192366; // Январь 2026
-  
-  document.getElementById('cr-total-debt').textContent = fmtShort(totalDebt);
-  document.getElementById('cr-monthly-pay').textContent = fmtShort(monthlyPay);
-  document.getElementById('cr-active-count').textContent = active.length;
-  document.getElementById('cr-close-count').textContent = closingIn2026;
-  
+  const totalDebt = active.reduce(function(s, c) { return s + (c.balanceCurrent || c.balanceInit); }, 0);
+  const initialDebt = 19192366;
   const paidPct = Math.round((1 - totalDebt / initialDebt) * 100);
-  document.getElementById('cr-progress').style.width = Math.max(paidPct, 0) + '%';
-  document.getElementById('cr-progress').textContent = paidPct + '%';
-  document.getElementById('cr-progress-label').textContent = `Погашено ${fmtShort(initialDebt - totalDebt)} из ${fmtShort(initialDebt)}`;
-  
-  // Список кредитов
+
+  let summaryHtml = '<div style="background:var(--bg); border-radius:12px; padding:14px; margin-bottom:12px; text-align:center;">';
+  summaryHtml += '<div style="font-size:12px; color:var(--text-secondary);">Общий долг</div>';
+  summaryHtml += '<div style="font-size:22px; font-weight:800;">' + fmtShort(totalDebt) + '</div>';
+  summaryHtml += '<div class="progress-bg" style="margin-top:8px;"><div class="progress-fg" style="width:' + Math.max(paidPct, 0) + '%; background:var(--accent-green);">' + paidPct + '%</div></div>';
+  summaryHtml += '<div style="font-size:11px; color:var(--text-secondary); margin-top:4px;">Погашено ' + fmtShort(initialDebt - totalDebt) + ' из ' + fmtShort(initialDebt) + '</div>';
+  summaryHtml += '</div>';
+  document.getElementById('credits-summary-box').innerHTML = summaryHtml;
+
   const list = document.getElementById('credits-list');
   list.innerHTML = '';
-  
-  const sorted = [...credits].sort((a, b) => {
-    if (a.status.includes('ЗАМОРОЖЕН')) return 1;
-    if (b.status.includes('ЗАМОРОЖЕН')) return -1;
+
+  const sorted = [...credits].sort(function(a, b) {
+    if ((a.status || '').includes('ЗАМОРОЖЕН')) return 1;
+    if ((b.status || '').includes('ЗАМОРОЖЕН')) return -1;
     return (b.rate || 0) - (a.rate || 0);
   });
-  
-  sorted.forEach(c => {
+
+  sorted.forEach(function(c) {
     const balance = c.balanceCurrent || c.balanceInit;
-    const isFrozen = c.status.includes('ЗАМОРОЖЕН');
+    const isFrozen = (c.status || '').includes('ЗАМОРОЖЕН');
     const paidPct = Math.round((1 - balance / c.balanceInit) * 100);
     const rateStr = c.rate ? (c.rate * 100).toFixed(1) + '%' : '0%';
-    
-    let priorityBadge = '';
+    let badge = '';
     if (c.priority > 0 && c.priority <= 3 && !isFrozen) {
-      priorityBadge = `<span style="background:var(--accent-red); color:white; font-size:9px; padding:2px 6px; border-radius:6px; margin-left:6px;">🎯 Приоритет ${c.priority}</span>`;
+      badge = '<span style="background:var(--accent-red); color:white; font-size:9px; padding:2px 6px; border-radius:6px; margin-left:6px;">Приоритет ' + c.priority + '</span>';
     }
-    
-    list.innerHTML += `
-      <div class="credit-card ${isFrozen ? 'frozen' : ''}">
-        <div class="credit-top">
-          <div>
-            <span class="credit-name">${c.name}</span>
-            ${priorityBadge}
-          </div>
-          <span class="credit-rate">${rateStr}</span>
-        </div>
-        <div class="credit-amount">${fmt(balance)}</div>
-        <div class="credit-row"><span>Платёж /мес</span><span>${fmt(c.payment)}</span></div>
-        ${c.paymentDay ? `<div class="credit-row"><span>День платежа</span><span>${c.paymentDay}-е число</span></div>` : ''}
-        ${c.closeDate ? `<div class="credit-row"><span>Закрытие (план)</span><span>${c.closeDate}</span></div>` : ''}
-        ${isFrozen ? '<div style="text-align:center; font-size:11px; color:#B2BEC3; margin-top:6px;">⚠️ Заморожен до апреля 2026</div>' : ''}
-        <div class="credit-progress">
-          <div class="credit-progress-fill" style="width:${Math.max(paidPct, 0)}%;"></div>
-        </div>
-        <div style="text-align:right; font-size:10px; color:var(--text-secondary); margin-top:2px;">
-          Погашено ${paidPct}%
-        </div>
-      </div>`;
+    list.innerHTML += '<div class="credit-card ' + (isFrozen ? 'frozen' : '') + '">' +
+      '<div class="credit-top"><div><span class="credit-name">' + c.name + '</span>' + badge + '</div><span class="credit-rate">' + rateStr + '</span></div>' +
+      '<div class="credit-amount">' + fmt(balance) + '</div>' +
+      '<div class="credit-row"><span>Платёж /мес</span><span>' + fmt(c.payment) + '</span></div>' +
+      (c.paymentDay ? '<div class="credit-row"><span>День платежа</span><span>' + c.paymentDay + '-е число</span></div>' : '') +
+      (c.closeDate ? '<div class="credit-row"><span>Закрытие</span><span>' + c.closeDate + '</span></div>' : '') +
+      '<div class="credit-progress"><div class="credit-progress-fill" style="width:' + Math.max(paidPct, 0) + '%;"></div></div>' +
+      '<div style="text-align:right; font-size:10px; color:var(--text-secondary); margin-top:2px;">Погашено ' + paidPct + '%</div>' +
+      '</div>';
   });
 }
 
 // ═══════════════════════════════════════════════════════════════
-// РЕНДЕР: КАЛЬКУЛЯТОР
+// NAVIGATION
 // ═══════════════════════════════════════════════════════════════
 
-function renderCalculator() {
-  const now = new Date();
-  const currentMonth = now.getMonth() + 1;
-  const daysInMonth = new Date(now.getFullYear(), currentMonth, 0).getDate();
-  const daysPassed = now.getDate();
-  const daysLeft = daysInMonth - daysPassed;
-  const monthProgress = daysPassed / daysInMonth;
-  
-  // Баланс (из данных)
-  const debitBalances = appState.balances.filter(b => b.type === 'Дебет' || b.type === 'РСч');
-  const totalBalance = debitBalances.reduce((s, b) => s + (b.balance || 0), 0);
-  
-  // Прогноз дохода на остаток месяца
-  const monthForecast = appState.forecast.find(f => f.month === currentMonth) || {};
-  const monthIncome = monthForecast.income || 0;
-  const remainingIncome = Math.round(monthIncome * (1 - monthProgress));
-  
-  // Расходы на семью (прогноз на остаток)
-  const familyExpenses = appState.settings['расходы_семья'] || 300000;
-  const remainingFamily = Math.round(familyExpenses * (1 - monthProgress));
-  
-  // Кредитные платежи (обязательные, оставшиеся в месяце)
-  const activeCredits = appState.credits.filter(c => c.status === 'Активный');
-  let remainingCredits = 0;
-  activeCredits.forEach(c => {
-    if (c.paymentDay && c.paymentDay > now.getDate()) {
-      remainingCredits += c.payment;
-    } else if (!c.paymentDay) {
-      // Если день неизвестен, считаем пропорционально
-      remainingCredits += Math.round(c.payment * (1 - monthProgress));
-    }
-  });
-  
-  // Аренда
-  const rent = appState.settings['аренда_всего'] || 396000;
-  // Предположим аренда ещё не оплачена в этом месяце
-  const remainingRent = rent;
-  
-  // Итого
-  const freeAmount = totalBalance + remainingIncome - remainingFamily - remainingCredits - remainingRent;
-  
-  // Отрисовка
-  document.getElementById('calc-free').textContent = fmt(freeAmount);
-  
-  let statusEmoji, statusText;
-  if (freeAmount > 200000) { statusEmoji = '🟢'; statusText = 'Отлично'; }
-  else if (freeAmount > 50000) { statusEmoji = '🟡'; statusText = 'Нормально'; }
-  else if (freeAmount > 0) { statusEmoji = '🟠'; statusText = 'Осторожно'; }
-  else { statusEmoji = '🔴'; statusText = 'Дефицит'; }
-  
-  document.getElementById('calc-status').textContent = `${statusEmoji} ${statusText} • День ${daysPassed}/${daysInMonth}`;
-  
-  document.getElementById('calc-balance').textContent = totalBalance > 0 ? '+' + fmt(totalBalance) : fmt(totalBalance) || 'Нет данных';
-  document.getElementById('calc-income').textContent = '+' + fmt(remainingIncome);
-  document.getElementById('calc-family').textContent = '−' + fmt(remainingFamily);
-  document.getElementById('calc-credits-pay').textContent = '−' + fmt(remainingCredits);
-  document.getElementById('calc-rent').textContent = '−' + fmt(remainingRent);
-  
-  // Ближайшие платежи
-  renderUpcomingPayments();
+function switchTab(name, btn) {
+  document.querySelectorAll('.main-tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('.nav-btn').forEach(function(b) { b.classList.remove('active'); });
+  document.getElementById('tab-' + name).classList.add('active');
+  if (btn) btn.classList.add('active');
+  else document.getElementById('nav-' + name).classList.add('active');
 }
 
-function renderUpcomingPayments() {
-  const now = new Date();
-  const today = now.getDate();
-  const container = document.getElementById('upcoming-payments');
-  
-  const upcoming = appState.credits
-    .filter(c => c.status === 'Активный' && c.paymentDay > 0)
-    .map(c => ({
-      name: c.name,
-      amount: c.payment,
-      day: c.paymentDay,
-      daysUntil: c.paymentDay >= today ? c.paymentDay - today : (30 - today + c.paymentDay)
-    }))
-    .sort((a, b) => a.daysUntil - b.daysUntil)
-    .slice(0, 5);
-  
-  if (upcoming.length === 0) {
-    container.innerHTML = '<p style="font-size:13px; color:var(--text-secondary);">Дни платежей не указаны. Заполните данные в Google Sheets.</p>';
-    return;
-  }
-  
-  container.innerHTML = upcoming.map(p => `
-    <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border);">
-      <div>
-        <div style="font-size:13px; font-weight:600;">${p.name}</div>
-        <div style="font-size:11px; color:var(--text-secondary);">${p.day}-е число (через ${p.daysUntil} дн.)</div>
-      </div>
-      <div style="font-size:15px; font-weight:700; color:var(--accent-red);">${fmt(p.amount)}</div>
-    </div>
-  `).join('');
+function toggleSection(id, el) {
+  const section = document.getElementById(id);
+  const isOpen = section.style.display !== 'none';
+  section.style.display = isOpen ? 'none' : 'block';
+  el.classList.toggle('open', !isOpen);
+}
+
+function refreshAll() {
+  loadAllData();
 }
 
 // ═══════════════════════════════════════════════════════════════
-// УТИЛИТЫ
+// UTILITIES
 // ═══════════════════════════════════════════════════════════════
 
 function fmt(num) {
-  if (!num && num !== 0) return '—';
-  return new Intl.NumberFormat('ru-RU').format(Math.round(num)) + '₽';
+  if (!num && num !== 0) return '\u2014';
+  return new Intl.NumberFormat('ru-RU').format(Math.round(num)) + '\u20BD';
 }
 
 function fmtShort(num) {
   if (!num) return '0';
-  if (Math.abs(num) >= 1000000) return (num / 1000000).toFixed(1) + 'М₽';
-  if (Math.abs(num) >= 1000) return Math.round(num / 1000) + 'К₽';
-  return Math.round(num) + '₽';
+  if (num < 0) return '\u2212' + fmtShort(Math.abs(num));
+  if (num >= 1000000) return (num / 1000000).toFixed(1) + '\u041C\u20BD';
+  if (num >= 1000) return Math.round(num / 1000) + '\u041A\u20BD';
+  return Math.round(num) + '\u20BD';
 }
 
 function showToast(msg) {
   const toast = document.getElementById('toast');
   toast.textContent = msg;
   toast.classList.add('show');
-  setTimeout(() => toast.classList.remove('show'), 2500);
+  setTimeout(function() { toast.classList.remove('show'); }, 2500);
 }
 
 // ═══════════════════════════════════════════════════════════════
-// ИНИЦИАЛИЗАЦИЯ
+// FAMILY IFRAME COMMUNICATION
+// ═══════════════════════════════════════════════════════════════
+
+window.addEventListener('message', function(e) {
+  if (e.data && e.data.type === 'familySummary') {
+    appState.familySummary = e.data;
+    renderFamilyCard();
+  }
+  if (e.data && e.data.type === 'bizExpensesSummary') {
+    appState.bizExpenses = e.data;
+    renderBizExpensesCard();
+  }
+});
+
+function renderBizExpensesCard() {
+  const card = document.getElementById('biz-expenses-card');
+  if (!card) return;
+  const d = appState.bizExpenses;
+  if (!d || d.total === 0) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  const cats = { rent: '🏠 Аренда', supplies: '🧵 Закупки', drycleaning: '👔 Химчистка', taxes: '🏦 Комиссии', maintenance: '🔧 Амортизация', bonuses: '🎉 Премии' };
+  let html = '<div style="display:flex; justify-content:space-between; margin-bottom:8px;"><span style="font-weight:700;">Расходы ателье (из выписок)</span><span style="font-weight:700;">' + fmtShort(d.total) + '</span></div>';
+  const keys = Object.keys(d.byCat || {}).filter(function(k) { return d.byCat[k] > 0; });
+  if (keys.length > 0) {
+    keys.sort(function(a, b) { return d.byCat[b] - d.byCat[a]; });
+    keys.forEach(function(k) {
+      html += '<div style="display:flex; justify-content:space-between; font-size:12px; padding:2px 0;"><span>' + (cats[k] || k) + '</span><span>' + fmtShort(d.byCat[k]) + '</span></div>';
+    });
+  }
+  html += '<div style="font-size:11px; color:var(--text-secondary); margin-top:6px;">' + d.count + ' операций размечено</div>';
+  card.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════════
+// INIT
 // ═══════════════════════════════════════════════════════════════
 
 window.onload = function() {
-  // Устанавливаем текущий месяц
   const now = new Date();
-  document.getElementById('bizMonthSelect').value = now.getMonth() + 1;
-  
-  // Загружаем все данные
+  const sel = document.getElementById('bizMonthSelect');
+  if (sel) sel.value = now.getMonth() + 1;
+
   loadAllData();
-  
-  // Регистрация Service Worker
+
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(err => console.log('SW reg failed:', err));
+    navigator.serviceWorker.register('sw.js').catch(function(err) { console.log('SW:', err); });
   }
 };
 </script>
