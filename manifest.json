@@ -1,0 +1,16 @@
+{
+  "name": "Семейный бюджет",
+  "short_name": "Бюджет",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f3f0ff",
+  "theme_color": "#8b5cf6",
+  "icons": [
+    {
+      "src": "icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
