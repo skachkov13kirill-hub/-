@@ -1748,9 +1748,21 @@ function fillCategorySelect(selectId, currentVal) {
   ).join('');
 }
 
+let lastEditSnapshot = null; // for undo edits
+
 function saveEditTx() {
   const tx = STATE.transactions.find(t => t.id === editingTxId);
   if (!tx) return;
+
+  // Snapshot before changes for undo
+  const snapshot = {
+    id: tx.id,
+    category: tx.category,
+    type: tx.type,
+    description: tx.description,
+    comment: tx.comment,
+    amount: tx.amount
+  };
 
   const oldCat = tx.category;
   const newCat = document.getElementById('edit-category').value;
@@ -1773,7 +1785,11 @@ function saveEditTx() {
 
   // Track changes in history
   if (oldCat !== tx.category) addTxHistory(tx, 'category', oldCat, tx.category);
-  if (tx.amount !== newAmount) addTxHistory(tx, 'amount', tx.amount, newAmount);
+  if (snapshot.amount !== newAmount) addTxHistory(tx, 'amount', snapshot.amount, newAmount);
+
+  // Check if anything actually changed
+  const changed = snapshot.category !== tx.category || snapshot.amount !== tx.amount ||
+    snapshot.description !== tx.description || snapshot.type !== tx.type;
 
   // If category changed, remember custom rule
   if (oldCat !== tx.category && tx.description) {
@@ -1789,7 +1805,49 @@ function saveEditTx() {
 
   saveState();
   closeModal('modal-edit');
-  toast('Операция обновлена');
+
+  if (changed) {
+    lastEditSnapshot = snapshot;
+    showUndoEditToast(oldCat !== tx.category
+      ? `Категория: ${oldCat} → ${tx.category}`
+      : 'Операция обновлена');
+  } else {
+    toast('Операция обновлена');
+  }
+  refreshCurrentView();
+}
+
+function showUndoEditToast(msg) {
+  if (undoTimer) clearTimeout(undoTimer);
+  const t = document.getElementById('toast');
+  t.innerHTML = `${msg} <button onclick="undoEdit()" style="margin-left:8px;padding:4px 12px;border-radius:8px;background:var(--accent);color:white;border:none;font-weight:600;cursor:pointer;">Отменить</button>`;
+  t.classList.add('show');
+  undoTimer = setTimeout(() => {
+    t.classList.remove('show');
+    lastEditSnapshot = null;
+  }, 6000);
+}
+
+function undoEdit() {
+  if (!lastEditSnapshot) return;
+  const tx = STATE.transactions.find(t => t.id === lastEditSnapshot.id);
+  if (!tx) { lastEditSnapshot = null; return; }
+
+  // Restore from snapshot
+  tx.category = lastEditSnapshot.category;
+  tx.type = lastEditSnapshot.type;
+  tx.description = lastEditSnapshot.description;
+  tx.comment = lastEditSnapshot.comment;
+  tx.amount = lastEditSnapshot.amount;
+
+  saveState();
+  lastEditSnapshot = null;
+
+  const t = document.getElementById('toast');
+  t.classList.remove('show');
+  if (undoTimer) clearTimeout(undoTimer);
+
+  toast('Изменения отменены');
   refreshCurrentView();
 }
 
@@ -1812,39 +1870,130 @@ function deleteEditTx() {
   refreshCurrentView();
 }
 
+let splitOriginalTx = null;
+
 function splitEditTx() {
   if (!requirePro('splitTransactions')) return;
   const tx = STATE.transactions.find(t => t.id === editingTxId);
   if (!tx) return;
 
-  const splitAmount = parseFloat(prompt(`Сумма для отделения из ${formatMoney(tx.amount)}:\n(оставшееся сохранится как отдельная операция)`));
-  if (!splitAmount || splitAmount <= 0 || splitAmount >= tx.amount) {
-    if (splitAmount) toast('Сумма должна быть меньше оригинала');
-    return;
+  splitOriginalTx = tx;
+  closeModal('modal-edit');
+
+  document.getElementById('split-tx-info').innerHTML =
+    `<b>${tx.description}</b> · ${tx.date} · <span style="color:var(--expense)">${formatMoney(tx.amount)}</span>`;
+
+  // Start with 2 parts: first gets half, second gets half
+  const half = Math.round(tx.amount / 2);
+  document.getElementById('split-parts').innerHTML = '';
+  addSplitPart(half, tx.category);
+  addSplitPart(tx.amount - half, 'Прочее');
+
+  updateSplitRemaining();
+  document.getElementById('modal-split').classList.add('active');
+}
+
+function addSplitPart(amount, category) {
+  const container = document.getElementById('split-parts');
+  const idx = container.children.length;
+  const div = document.createElement('div');
+  div.className = 'split-part';
+  div.style.cssText = 'padding:10px;margin-bottom:8px;background:var(--bg-secondary);border-radius:10px;border:1px solid var(--border);';
+
+  let catOptions = Object.entries(CATEGORIES).map(([cat, info]) =>
+    `<option value="${cat}" ${cat === (category || 'Прочее') ? 'selected' : ''}>${info.emoji} ${cat}</option>`
+  ).join('');
+
+  div.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+      <span style="font-weight:600;font-size:0.85rem;color:var(--text-muted);">Часть ${idx + 1}</span>
+      ${idx >= 2 ? `<button onclick="removeSplitPart(this)" style="margin-left:auto;background:none;border:none;color:var(--red);cursor:pointer;font-size:1rem;">✕</button>` : '<span style="flex:1"></span>'}
+    </div>
+    <div style="display:flex;gap:8px;">
+      <input type="number" class="split-amount" value="${amount || ''}" min="1" step="0.01"
+        oninput="updateSplitRemaining()"
+        style="flex:1;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.95rem;font-family:'JetBrains Mono',monospace;"
+        placeholder="Сумма">
+      <select class="split-category" style="flex:1.2;padding:8px 6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.85rem;">
+        ${catOptions}
+      </select>
+    </div>`;
+  container.appendChild(div);
+  updateSplitRemaining();
+}
+
+function removeSplitPart(btn) {
+  btn.closest('.split-part').remove();
+  // Re-number parts
+  document.querySelectorAll('#split-parts .split-part').forEach((p, i) => {
+    p.querySelector('span').textContent = `Часть ${i + 1}`;
+  });
+  updateSplitRemaining();
+}
+
+function updateSplitRemaining() {
+  if (!splitOriginalTx) return;
+  const total = splitOriginalTx.amount;
+  let used = 0;
+  document.querySelectorAll('.split-amount').forEach(inp => {
+    used += parseFloat(inp.value) || 0;
+  });
+  const remaining = Math.round((total - used) * 100) / 100;
+  const el = document.getElementById('split-remaining');
+  const btn = document.getElementById('split-save-btn');
+
+  if (Math.abs(remaining) < 0.01) {
+    el.innerHTML = `<span style="color:var(--green);">Сумма совпадает ✓</span>`;
+    btn.disabled = false;
+  } else if (remaining > 0) {
+    el.innerHTML = `<span style="color:var(--accent);">Осталось распределить: ${formatMoney(remaining)}</span>`;
+    btn.disabled = true;
+  } else {
+    el.innerHTML = `<span style="color:var(--red);">Превышение на ${formatMoney(Math.abs(remaining))}</span>`;
+    btn.disabled = true;
   }
+}
 
-  // Create new transaction with the split amount
-  const newTx = {
-    ...tx,
-    id: `split_${Date.now()}_${txHash('split', tx.date, tx.time || '', String(splitAmount), tx.description)}`,
-    amount: splitAmount,
-    comment: (tx.comment ? tx.comment + ' · ' : '') + 'Разделено',
-    splitFrom: tx.id
-  };
+function saveSplit() {
+  if (!splitOriginalTx) return;
+  const tx = splitOriginalTx;
+  const parts = [];
 
-  // Reduce original amount
-  tx.amount = tx.amount - splitAmount;
+  document.querySelectorAll('#split-parts .split-part').forEach(p => {
+    const amount = parseFloat(p.querySelector('.split-amount').value) || 0;
+    const category = p.querySelector('.split-category').value;
+    if (amount > 0) parts.push({ amount, category });
+  });
+
+  if (parts.length < 2) { toast('Нужно минимум 2 части'); return; }
+
+  const totalParts = parts.reduce((s, p) => s + p.amount, 0);
+  if (Math.abs(totalParts - tx.amount) > 0.01) { toast('Сумма частей не совпадает'); return; }
+
+  // First part stays as original tx (updated)
+  tx.amount = parts[0].amount;
+  tx.category = parts[0].category;
   tx.comment = (tx.comment ? tx.comment + ' · ' : '') + 'Разделено';
 
-  STATE.transactions.push(newTx);
+  // Remaining parts become new transactions
+  for (let i = 1; i < parts.length; i++) {
+    const newTx = {
+      ...tx,
+      id: `split_${Date.now()}_${i}_${txHash('split', tx.date, tx.time || '', String(parts[i].amount), tx.description)}`,
+      amount: parts[i].amount,
+      category: parts[i].category,
+      comment: (tx.comment || '') + (i === 1 ? '' : ' · Разделено'),
+      splitFrom: tx.id
+    };
+    STATE.transactions.push(newTx);
+  }
+
   STATE.transactions.sort((a, b) => b.date.localeCompare(a.date) || (b.time || '').localeCompare(a.time || ''));
   saveState();
 
-  closeModal('modal-edit');
-  toast(`Операция разделена: ${formatMoney(tx.amount)} + ${formatMoney(splitAmount)}`);
-
-  // Open new tx for category assignment
-  setTimeout(() => openEditTx(newTx.id), 400);
+  closeModal('modal-split');
+  toast(`Операция разбита на ${parts.length} части`);
+  splitOriginalTx = null;
   refreshCurrentView();
 }
 
@@ -3139,9 +3288,71 @@ function applySmartPatterns() {
 function showSmartPatternSuggestions() {
   const suggestions = findRecurringPatterns();
   if (suggestions.length === 0) return;
-  // Show first suggestion as a toast prompt
-  const s = suggestions[0];
-  toast(`Обнаружен паттерн: ${s.desc} (×${s.count}, ~${formatMoney(s.avgAmount)}). Откройте Настройки → Правила.`);
+
+  let catOptions = Object.entries(CATEGORIES).map(([cat, info]) =>
+    `<option value="${cat}">${info.emoji} ${cat}</option>`
+  ).join('');
+
+  const html = suggestions.slice(0, 8).map((s, i) => {
+    const info = CATEGORIES[s.category] || { emoji: '❓' };
+    return `
+      <label style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);cursor:pointer;">
+        <input type="checkbox" class="pattern-check" data-idx="${i}" checked style="width:18px;height:18px;accent-color:var(--accent);">
+        <div style="flex:1;min-width:0;">
+          <div style="font-weight:600;font-size:0.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${s.desc}</div>
+          <div style="font-size:0.75rem;color:var(--text-muted);">×${s.count} операций · ~${formatMoney(s.avgAmount)}</div>
+        </div>
+        <select class="pattern-cat" data-idx="${i}" style="padding:6px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:0.8rem;max-width:130px;">
+          ${catOptions.replace(`value="${s.category}"`, `value="${s.category}" selected`)}
+        </select>
+      </label>`;
+  }).join('');
+
+  document.getElementById('smart-pattern-list').innerHTML = html;
+  document.getElementById('modal-smart-patterns').classList.add('active');
+
+  // Store suggestions for apply
+  window._smartSuggestions = suggestions.slice(0, 8);
+}
+
+function applySelectedPatterns() {
+  const suggestions = window._smartSuggestions || [];
+  let applied = 0;
+
+  document.querySelectorAll('.pattern-check:checked').forEach(ch => {
+    const idx = parseInt(ch.dataset.idx);
+    const s = suggestions[idx];
+    if (!s) return;
+
+    const catSelect = document.querySelector(`.pattern-cat[data-idx="${idx}"]`);
+    const category = catSelect ? catSelect.value : s.category;
+
+    STATE.smartPatterns.push({
+      descKey: s.descKey,
+      category: category,
+      avgAmount: s.avgAmount,
+      createdAt: new Date().toISOString()
+    });
+
+    // Apply to existing transactions
+    STATE.transactions.forEach(tx => {
+      const key = (tx.description || '').substring(0, 20).toUpperCase().trim();
+      if (key === s.descKey && tx.category !== category) {
+        tx.category = category;
+        applied++;
+      }
+    });
+  });
+
+  saveState();
+  closeModal('modal-smart-patterns');
+  window._smartSuggestions = null;
+  if (applied > 0) {
+    toast(`Применено: ${applied} операций перекатегоризировано`);
+  } else {
+    toast('Паттерны сохранены');
+  }
+  refreshCurrentView();
 }
 
 // ============================================================

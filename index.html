@@ -456,6 +456,25 @@
   </div>
 </div>
 
+<!-- ============ MODAL: Split transaction ============ -->
+<div class="modal-overlay" id="modal-split" onclick="if(event.target===this)closeModal('modal-split')">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('modal-split')" aria-label="Закрыть">✕</button>
+    <div class="modal-handle"></div>
+    <h3 style="margin-bottom:4px;">✂️ Разбить операцию</h3>
+    <div id="split-tx-info" style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;"></div>
+    <div id="split-parts"></div>
+    <div style="margin:12px 0;">
+      <button onclick="addSplitPart()" style="width:100%;padding:10px;border-radius:8px;background:var(--bg-secondary);color:var(--accent);border:1px dashed var(--accent);font-weight:600;cursor:pointer;">+ Ещё часть</button>
+    </div>
+    <div id="split-remaining" style="text-align:center;font-weight:700;font-size:1rem;margin:8px 0;"></div>
+    <div class="btn-row">
+      <button class="btn-secondary" onclick="closeModal('modal-split')">Отмена</button>
+      <button class="btn-primary" id="split-save-btn" onclick="saveSplit()" disabled>Сохранить</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ MODAL: Manual add ============ -->
 <div class="modal-overlay" id="modal-add" onclick="if(event.target===this)closeModal('modal-add')">
   <div class="modal">
@@ -560,6 +579,21 @@
     <div class="btn-row" style="margin-top:12px;">
       <button class="btn-secondary" onclick="closeModal('modal-dash-exclude')">Отмена</button>
       <button class="btn-primary" onclick="applyDashExclude()">Применить</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL: Smart Pattern Suggestions ============ -->
+<div class="modal-overlay" id="modal-smart-patterns" onclick="if(event.target===this)closeModal('modal-smart-patterns')">
+  <div class="modal" style="max-height:85vh;overflow-y:auto;">
+    <button class="modal-close" onclick="closeModal('modal-smart-patterns')" aria-label="Закрыть">✕</button>
+    <div class="modal-handle"></div>
+    <h3 style="margin-bottom:4px;">🔮 Обнаружены паттерны</h3>
+    <div style="font-size:0.85rem;color:var(--text-muted);margin-bottom:12px;">Регулярные операции, которые можно автоматически категоризировать.</div>
+    <div id="smart-pattern-list"></div>
+    <div class="btn-row" style="margin-top:12px;">
+      <button class="btn-secondary" onclick="closeModal('modal-smart-patterns')">Потом</button>
+      <button class="btn-primary" onclick="applySelectedPatterns()">Применить выбранные</button>
     </div>
   </div>
 </div>

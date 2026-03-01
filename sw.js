@@ -3,11 +3,12 @@
 //  Обеспечивает офлайн-работу и корректную работу с домашнего экрана
 // ============================================================
 
-const CACHE_NAME = 'finance-helper-v5';
+const CACHE_NAME = 'finance-helper-v6';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
-  './app.html',
+  './css/styles.css',
+  './js/app.js',
   './landing.html',
   './legal.html',
   './manifest.json'
