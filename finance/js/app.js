@@ -599,8 +599,10 @@ async function parsePDF(file) {
 }
 
 function detectBank(text) {
-  if (text.includes('sberbank.ru') || text.includes('СберБанк') || text.includes('СБЕРБАНК') || text.includes('Выписка по платёжному счёту') || text.includes('Выписка по счёту кредитной карты')) return 'sber';
-  if (text.includes('ТБАНК') || text.includes('TBANK') || text.includes('tbank.ru') || text.includes('Справка о движении средств')) return 'tinkoff';
+  // Search only the header (first 1500 chars) to avoid false matches from transaction descriptions
+  const header = text.substring(0, 1500);
+  if (header.includes('sberbank.ru') || header.includes('СберБанк') || header.includes('СБЕРБАНК') || header.includes('Выписка по платёжному счёту') || header.includes('Выписка по счёту кредитной карты')) return 'sber';
+  if (header.includes('ТБАНК') || header.includes('TBANK') || header.includes('tbank.ru') || header.includes('Т-Банк') || header.includes('Тинькофф') || header.includes('Tinkoff') || header.includes('Справка о движении средств')) return 'tinkoff';
   return null;
 }
 
@@ -615,71 +617,135 @@ function parseSber(text) {
   const transactions = [];
   const lines = text.split('\n').map(l => l.trim()).filter(l => l);
 
-  // Sber PDF.js: each table cell on separate line. Two formats:
-  // DEBIT:  date → time → authcode(6dig) → category → amount → balance → date2 → description...
-  // CREDIT: date → time → category(text) → amount → balance → date2 → authcode → description...
+  // Sber PDF.js extracts table cells in five modes:
+  // MODE A (credit, merged):   "25.01.2026 10:06" / category / amount / balance / "25.01.2026 060393" / description
+  // MODE B (credit, separate): "25.01.2026" / "10:06" / [authcode] / category / amount / balance / date2 / [authcode] / description
+  // MODE C (debit, all-in-one): "27.02.2026 14:31 444516 Перевод СБП" / amount / balance / date2 / description
+  // MODE D (debit, split cells): "31.01.2026 21:13 734687" / category / amount / balance / date2 / description
+  // MODE E (full-line fallback): "27.02.2026 14:31 444516 Перевод СБП 1 125,00 124,09" (all on one line)
 
+  const dateTimeAuthCatRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})\s+\d{6}\s+(.+)$/;
+  const dateTimeAuthOnlyRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})\s+(\d{6})$/;
+  const dateTimeRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})$/;
   const dateRe = /^\d{2}\.\d{2}\.\d{4}$/;
   const timeRe = /^\d{2}:\d{2}$/;
   const authRe = /^\d{6}$/;
+  const dateAuthRe = /^\d{2}\.\d{2}\.\d{4}\s+\d{6}$/;
   const amountRe = /^[\+]?[\d\s]+,\d{2}$/;
   const pageMarkerRe = /^(?:ДАТА|Продолжение|Для проверки|Действителен|www\.sberbank|Выписка по|ВЫПИСКА|Страница \d|Расшифровка)/;
 
-  // Helper: is this a new Sber transaction start?
   function isNewTxStart(idx) {
-    if (idx + 2 >= lines.length) return false;
-    if (!dateRe.test(lines[idx]) || !timeRe.test(lines[idx+1])) return false;
-    // Debit: date+time+authcode
-    if (authRe.test(lines[idx+2])) return true;
-    // Credit: date+time+category(text)+amount+balance
-    if (idx + 4 < lines.length && !dateRe.test(lines[idx+2]) && !authRe.test(lines[idx+2]) &&
-        !amountRe.test(lines[idx+2]) && amountRe.test(lines[idx+3]) && amountRe.test(lines[idx+4])) return true;
+    if (idx >= lines.length) return false;
+    if (dateTimeAuthCatRe.test(lines[idx])) return true;
+    if (dateTimeAuthOnlyRe.test(lines[idx])) return true;
+    if (dateTimeRe.test(lines[idx])) return true;
+    if (idx + 1 < lines.length && dateRe.test(lines[idx]) && timeRe.test(lines[idx + 1])) return true;
     return false;
   }
 
-  for (let i = 0; i < lines.length - 4; i++) {
-    if (!dateRe.test(lines[i])) continue;
-    if (!timeRe.test(lines[i+1])) continue;
+  for (let i = 0; i < lines.length - 2; i++) {
+    let date, time, category, amountLine, balanceLine, descStart;
 
-    const date = lines[i];
-    const time = lines[i+1];
-    let category, amountLine, balanceLine, descStart;
-
-    if (authRe.test(lines[i+2])) {
-      // DEBIT format: date time authcode category amount balance
-      if (i + 5 >= lines.length) continue;
-      category = lines[i+3];
-      if (dateRe.test(category) || amountRe.test(category)) continue;
-      amountLine = lines[i+4];
-      balanceLine = lines[i+5];
-      if (!amountRe.test(amountLine) || !amountRe.test(balanceLine)) continue;
-      descStart = i + 6;
-    } else if (!dateRe.test(lines[i+2]) && !amountRe.test(lines[i+2]) &&
-               i + 4 < lines.length && amountRe.test(lines[i+3]) && amountRe.test(lines[i+4])) {
-      // CREDIT format: date time category amount balance
-      category = lines[i+2];
-      amountLine = lines[i+3];
-      balanceLine = lines[i+4];
-      descStart = i + 5;
+    // MODE C: "27.02.2026 14:31 444516 Перевод СБП" / amount / balance / date2 / description
+    // MODE E fallback: same regex but amounts embedded in category capture
+    const dtacMatch = lines[i].match(dateTimeAuthCatRe);
+    if (dtacMatch) {
+      date = dtacMatch[1];
+      time = dtacMatch[2];
+      const catRaw = dtacMatch[3];
+      if (i + 2 < lines.length && amountRe.test(lines[i + 1]) && amountRe.test(lines[i + 2])) {
+        // MODE C: amounts on next lines
+        category = catRaw;
+        amountLine = lines[i + 1];
+        balanceLine = lines[i + 2];
+        descStart = i + 3;
+      } else {
+        // MODE E: amounts embedded in the same line as category
+        const fullMatch = catRaw.match(/^(.+?)\s+([\+]?\d[\d ]*,\d{2})\s+([\+]?\d[\d ]*,\d{2})$/);
+        if (fullMatch) {
+          category = fullMatch[1];
+          amountLine = fullMatch[2];
+          balanceLine = fullMatch[3];
+          descStart = i + 1;
+        } else {
+          continue;
+        }
+      }
     } else {
-      continue;
+      // MODE D: "31.01.2026 21:13 734687" / category / amount / balance
+      const dtaMatch = lines[i].match(dateTimeAuthOnlyRe);
+      if (dtaMatch) {
+        date = dtaMatch[1];
+        time = dtaMatch[2];
+        if (i + 3 >= lines.length) continue;
+        category = lines[i + 1];
+        if (dateRe.test(category) || amountRe.test(category) || dateTimeRe.test(category) ||
+            dateTimeAuthOnlyRe.test(category) || dateTimeAuthCatRe.test(category) || pageMarkerRe.test(category)) continue;
+        amountLine = lines[i + 2];
+        balanceLine = lines[i + 3];
+        if (!amountRe.test(amountLine) || !amountRe.test(balanceLine)) continue;
+        descStart = i + 4;
+      } else {
+        // MODE A: merged date+time "25.01.2026 10:06"
+        const dtMatch = lines[i].match(dateTimeRe);
+        let nextIdx;
+        if (dtMatch) {
+          date = dtMatch[1];
+          time = dtMatch[2];
+          nextIdx = i + 1;
+        } else if (dateRe.test(lines[i]) && i + 1 < lines.length && timeRe.test(lines[i + 1])) {
+          // MODE B: separate "25.01.2026" + "10:06"
+          date = lines[i];
+          time = lines[i + 1];
+          nextIdx = i + 2;
+        } else {
+          continue;
+        }
+
+        if (nextIdx + 2 >= lines.length) continue;
+
+        if (authRe.test(lines[nextIdx])) {
+          // DEBIT: authcode → category → amount → balance
+          if (nextIdx + 3 >= lines.length) continue;
+          category = lines[nextIdx + 1];
+          if (dateRe.test(category) || amountRe.test(category) || dateTimeRe.test(category)) continue;
+          amountLine = lines[nextIdx + 2];
+          balanceLine = lines[nextIdx + 3];
+          if (!amountRe.test(amountLine) || !amountRe.test(balanceLine)) continue;
+          descStart = nextIdx + 4;
+        } else if (!dateRe.test(lines[nextIdx]) && !amountRe.test(lines[nextIdx]) && !dateTimeRe.test(lines[nextIdx]) &&
+                   nextIdx + 2 < lines.length && amountRe.test(lines[nextIdx + 1]) && amountRe.test(lines[nextIdx + 2])) {
+          // CREDIT: category → amount → balance
+          category = lines[nextIdx];
+          amountLine = lines[nextIdx + 1];
+          balanceLine = lines[nextIdx + 2];
+          descStart = nextIdx + 3;
+        } else {
+          continue;
+        }
+      }
     }
 
     const amountStr = amountLine.replace(/\s/g, '').replace(',', '.');
     const balanceStr = balanceLine.replace(/\s/g, '').replace(',', '.');
 
-    // Collect description
+    // Collect description, skipping date2+authcode
     let desc = '';
     let j = descStart;
-    // Skip date2 and authcode lines
-    if (j < lines.length && dateRe.test(lines[j])) j++;
-    if (j < lines.length && authRe.test(lines[j])) j++;
+    // Skip merged date2+authcode: "25.01.2026 060393"
+    if (j < lines.length && dateAuthRe.test(lines[j])) {
+      j++;
+    } else {
+      // Or skip separate date2 and authcode
+      if (j < lines.length && dateRe.test(lines[j])) j++;
+      if (j < lines.length && authRe.test(lines[j])) j++;
+    }
     // Collect until next transaction or page marker
     while (j < lines.length) {
       const l = lines[j];
       if (isNewTxStart(j)) break;
       if (pageMarkerRe.test(l)) break;
-      if (dateRe.test(l)) { j++; continue; }
+      if (dateRe.test(l) || dateTimeRe.test(l) || dateAuthRe.test(l)) { j++; continue; }
       if (authRe.test(l)) { j++; continue; }
       desc += (desc ? ' ' : '') + l;
       j++;
@@ -727,66 +793,78 @@ function parseTinkoff(text) {
   const transactions = [];
   const lines = text.split('\n').map(l => l.trim()).filter(l => l);
 
-  // Tinkoff PDF.js format: each cell on separate line
-  // Pattern: DATE1 TIME1 DATE2 TIME2 AMOUNT1₽ AMOUNT2₽ DESCRIPTION... CARDNUM
-  // Lines: "31.12.2025" "17:06" "31.12.2025" "17:06" "+20 823.00 ₽" "+20 823.00 ₽"
-  //        "Пополнение. Система" "быстрых платежей" "9971"
+  // Tinkoff PDF.js - two known extraction modes:
+  // MODE A (new, merged): "31.12.2025 31.12.2025" / "+20 823.00" / "+20 823.00" / desc+card+₽ / ₽ / time / time / desc...
+  // MODE B (old, separate): "31.12.2025" / "17:06" / "31.12.2025" / "17:06" / "+20 823.00 ₽" / "+20 823.00 ₽" / desc / "9971"
 
+  const twoDateRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}\.\d{2}\.\d{4})$/;
   const dateRe = /^\d{2}\.\d{2}\.\d{4}$/;
   const timeRe = /^\d{2}:\d{2}$/;
-  const amountRe = /^[+-][\d\s]+\.\d{2}\s*₽$/;
+  const amountNoRubleRe = /^[+-][\d\s]+\.\d{2}$/;
+  const amountWithRubleRe = /^[+-][\d\s]+\.\d{2}\s*₽$/;
+  const amountAnyRe = /^[+-][\d\s]+\.\d{2}\s*₽?$/;
   const cardRe = /^\d{4}$|^—$/;
+  const footerRe = /^(?:АО|БИК|Дата и время|Исх\.|Справка о движении)/;
 
-  for (let i = 0; i < lines.length - 5; i++) {
-    // Pattern: date1, time1, date2, time2, amount1₽, amount2₽
-    if (!dateRe.test(lines[i])) continue;
-    if (!timeRe.test(lines[i+1])) continue;
-    if (!dateRe.test(lines[i+2])) continue;
-    if (!timeRe.test(lines[i+3])) continue;
-    if (!amountRe.test(lines[i+4])) continue;
-    if (!amountRe.test(lines[i+5])) continue;
-
-    const date = lines[i];
-    const time = lines[i+1];
-    const amountLine = lines[i+4];
-    const amountStr = amountLine.replace(/\s/g, '').replace('₽', '');
-
-    // Collect description lines until card number (4 digits) or next transaction
-    let desc = '';
-    let j = i + 6;
-    while (j < lines.length) {
-      var l = lines[j];
-      // Card number = end of this transaction
-      if (cardRe.test(l)) { j++; break; }
-      // Next transaction starts
-      if (dateRe.test(l) && j+1 < lines.length && timeRe.test(lines[j+1]) && j+2 < lines.length && dateRe.test(lines[j+2])) break;
-      // Footer markers
-      if (l.startsWith('АО') || l.startsWith('БИК') || l.startsWith('Дата и время') || l.startsWith('Исх.')) break;
-      desc += (desc ? ' ' : '') + l;
-      j++;
-    }
-
-    desc = desc.replace(/\s+/g, ' ').trim();
-
-    const isIncome = amountStr.startsWith('+');
-    const amount = Math.abs(parseFloat(amountStr));
-    if (amount === 0 || isNaN(amount)) continue;
-
-    const parts = date.split('.');
-    var dd = parts[0], mm = parts[1], yyyy = parts[2];
-    var monthKey = yyyy + '-' + mm;
-    var isoDate = yyyy + '-' + mm + '-' + dd;
-
-    // Detect type
-    var type = isIncome ? 'income' : 'expense';
+  function classifyType(desc, isIncome) {
+    let type = isIncome ? 'income' : 'expense';
     if (desc.includes('Внутрибанковский перевод') || desc.includes('Внутренний перевод')) {
       type = isIncome ? 'income' : 'transfer';
     }
     if (desc.includes('Пополнение')) type = 'income';
     if (desc.includes('Внешний перевод') || desc.includes('Внешний банковский')) type = 'transfer';
     if (desc.includes('Проценты по кредиту') || desc.includes('Плата за Программу') || desc.includes('Плата за использование')) type = 'expense';
+    return type;
+  }
 
-    var cat = categorizeTransaction(desc, null);
+  // Try NEW format first: two dates on one line + amounts (with or without ₽)
+  for (let i = 0; i < lines.length - 2; i++) {
+    const dateMatch = lines[i].match(twoDateRe);
+    if (!dateMatch) continue;
+    if (!amountAnyRe.test(lines[i + 1])) continue;
+    if (!amountAnyRe.test(lines[i + 2])) continue;
+
+    const date = dateMatch[1];
+    const amountStr = lines[i + 1].replace(/\s/g, '').replace('₽', '');
+
+    // Find next transaction start (next twoDateRe or footer)
+    let nextTx = lines.length;
+    for (let k = i + 3; k < lines.length; k++) {
+      if (twoDateRe.test(lines[k])) { nextTx = k; break; }
+      if (footerRe.test(lines[k])) { nextTx = k; break; }
+    }
+
+    // Collect lines between amounts and next tx, extracting time and filtering noise
+    let time = '';
+    const descParts = [];
+    for (let j = i + 3; j < nextTx; j++) {
+      const l = lines[j];
+      if (footerRe.test(l)) break;
+      if (timeRe.test(l)) { if (!time) time = l; continue; }
+      if (l === '₽') continue;
+      if (cardRe.test(l)) continue;
+      descParts.push(l);
+    }
+
+    let desc = descParts.join(' ');
+    // Clean embedded card+₽: "Описание 9971 ₽ продолжение" → "Описание продолжение"
+    desc = desc.replace(/\s+\d{4}\s*₽/g, '');
+    desc = desc.replace(/\s*₽/g, '');
+    desc = desc.replace(/\s+\d{4}$/g, '');
+    desc = desc.replace(/\s+—$/g, '');
+    // Remove embedded 4-digit card number between words: "Система 9971 быстрых" → "Система быстрых"
+    desc = desc.replace(/\s+\d{4}\s+/g, ' ');
+    desc = desc.replace(/\s+/g, ' ').trim();
+
+    const isIncome = amountStr.startsWith('+');
+    const amount = Math.abs(parseFloat(amountStr));
+    if (amount === 0 || isNaN(amount)) continue;
+
+    const [dd, mm, yyyy] = date.split('.');
+    const monthKey = yyyy + '-' + mm;
+    const isoDate = yyyy + '-' + mm + '-' + dd;
+    const type = classifyType(desc, isIncome);
+    const cat = categorizeTransaction(desc, null);
 
     transactions.push({
       id: 'tink_' + date + '_' + time + '_' + txHash('tink', date, time, amountStr, desc),
@@ -803,7 +881,62 @@ function parseTinkoff(text) {
       bank: 'Тинькофф'
     });
 
-    i = j - 1;
+    i = nextTx - 1;
+  }
+
+  // If new format found nothing, try OLD format: date/time/date/time/amount₽/amount₽
+  if (transactions.length === 0) {
+    for (let i = 0; i < lines.length - 5; i++) {
+      if (!dateRe.test(lines[i])) continue;
+      if (!timeRe.test(lines[i+1])) continue;
+      if (!dateRe.test(lines[i+2])) continue;
+      if (!timeRe.test(lines[i+3])) continue;
+      if (!amountWithRubleRe.test(lines[i+4])) continue;
+      if (!amountWithRubleRe.test(lines[i+5])) continue;
+
+      const date = lines[i];
+      const time = lines[i+1];
+      const amountStr = lines[i+4].replace(/\s/g, '').replace('₽', '');
+
+      let desc = '';
+      let j = i + 6;
+      while (j < lines.length) {
+        const l = lines[j];
+        if (cardRe.test(l)) { j++; break; }
+        if (dateRe.test(l) && j+1 < lines.length && timeRe.test(lines[j+1]) && j+2 < lines.length && dateRe.test(lines[j+2])) break;
+        if (footerRe.test(l)) break;
+        desc += (desc ? ' ' : '') + l;
+        j++;
+      }
+
+      desc = desc.replace(/\s+/g, ' ').trim();
+      const isIncome = amountStr.startsWith('+');
+      const amount = Math.abs(parseFloat(amountStr));
+      if (amount === 0 || isNaN(amount)) continue;
+
+      const [dd, mm, yyyy] = date.split('.');
+      const monthKey = yyyy + '-' + mm;
+      const isoDate = yyyy + '-' + mm + '-' + dd;
+      const type = classifyType(desc, isIncome);
+      const cat = categorizeTransaction(desc, null);
+
+      transactions.push({
+        id: 'tink_' + date + '_' + time + '_' + txHash('tink', date, time, amountStr, desc),
+        date: isoDate,
+        time: time,
+        monthKey: monthKey,
+        amount: amount,
+        type: type,
+        description: desc,
+        bankCategory: null,
+        category: cat,
+        merchant: desc,
+        balance: null,
+        bank: 'Тинькофф'
+      });
+
+      i = j - 1;
+    }
   }
 
   return transactions;
@@ -844,21 +977,24 @@ async function handleFiles(files) {
 
     try {
       let txs;
+      let text = '';
+      let bank = null;
+
       if (isCSV) {
         // CSV import
-        const csvText = await new Promise((resolve, reject) => {
+        text = await new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = e => resolve(e.target.result);
           reader.onerror = reject;
           reader.readAsText(file);
         });
         updateProgress(65, 'Разбираю CSV...');
-        txs = parseCSV(csvText);
+        txs = parseCSV(text);
         console.log(`[FinHelper] CSV: Parsed ${txs.length} transactions from ${file.name}`);
       } else {
         // PDF import
-        const text = await parsePDF(file);
-        const bank = detectBank(text);
+        text = await parsePDF(file);
+        bank = detectBank(text);
         if (!bank) {
           toast('Не удалось определить банк. Поддерживаем Сбер и Тинькофф.');
           continue;
@@ -891,7 +1027,8 @@ async function handleFiles(files) {
         STATE.files.push(file.name);
       }
 
-      toast(`${bank === 'sber' ? 'Сбербанк' : 'Тинькофф'}: ${txs.length} операций`);
+      const bankLabel = bank === 'sber' ? 'Сбербанк' : bank === 'tinkoff' ? 'Тинькофф' : 'CSV';
+      toast(`${bankLabel}: ${txs.length} операций`);
       trackEvent('pdf_upload', { bank: bank || 'csv', count: txs.length });
 
     } catch(e) {
