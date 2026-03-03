@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="css/app.css">
+<title>DressCode · Финансы</title>
+</head>
+<body>
+
+<!-- HEADER -->
+<header class="app-header">
+  <div>
+    <div class="app-title">DressCode · Финансы</div>
+    <div class="app-subtitle" id="headerSubtitle">Загрузка...</div>
+  </div>
+  <div class="header-right">
+    <div class="update-badge" id="updateBadge">—</div>
+    <button class="btn-refresh" id="btnRefresh" onclick="refreshAll()" title="Обновить">&#x21bb;</button>
+  </div>
+</header>
+
+<nav class="bottom-nav">
+  <button class="nav-btn active" onclick="switchTab('home',this)" id="nav-home">
+    <span class="nav-icon">&#x1F3E0;</span>Главная
+  </button>
+  <button class="nav-btn" onclick="switchTab('business',this)" id="nav-business">
+    <span class="nav-icon">&#x1F3E2;</span>Бизнес
+  </button>
+  <button class="nav-btn" onclick="switchTab('family',this)" id="nav-family">
+    <span class="nav-icon">&#x1F46A;</span>Семья
+  </button>
+</nav>
+
+<!-- ══════ TAB: ГЛАВНАЯ ══════ -->
+<div class="main-tab active" id="tab-home">
+
+  <!-- Виджет "Свободные деньги" -->
+  <div class="free-money-card" id="freeMoneyContent">
+    <div class="free-money-title">&#x1F4B0; Свободные деньги</div>
+    <div style="font-size:13px;opacity:0.5;margin-top:8px;">Загрузка данных...</div>
+  </div>
+
+  <!-- Мини-карточки -->
+  <div class="mini-cards">
+    <div class="mini-card" id="miniCardBiz" onclick="switchTab('business',document.getElementById('nav-business'))">
+      <div class="mini-card-icon">&#x1F3E2;</div>
+      <div class="mini-card-label">Бизнес</div>
+      <div class="mini-card-value">—</div>
+      <div class="mini-card-sub">загрузка...</div>
+    </div>
+    <div class="mini-card" id="miniCardFamily" onclick="switchTab('family',document.getElementById('nav-family'))">
+      <div class="mini-card-icon">&#x1F46A;</div>
+      <div class="mini-card-label">Семья</div>
+      <div class="mini-card-value">—</div>
+      <div class="mini-card-sub">загрузка...</div>
+    </div>
+    <div class="mini-card" id="miniCardCredits" onclick="openCreditsOverlay()">
+      <div class="mini-card-icon">&#x1F4B3;</div>
+      <div class="mini-card-label">Кредиты</div>
+      <div class="mini-card-value">—</div>
+      <div class="mini-card-sub">загрузка...</div>
+    </div>
+  </div>
+
+  <!-- Платежи -->
+  <div class="card priority-card" id="card-payments">
+    <div class="card-header">&#x1F4B3; Платежи — <span id="payMonthName">март</span></div>
+    <div id="paymentsContent"><div class="loading-box"><div class="spinner"></div></div></div>
+  </div>
+
+</div>
+
+<!-- ══════ TAB: БИЗНЕС ══════ -->
+<div class="main-tab" id="tab-business">
+  <div class="month-select">
+    <span style="font-weight:600;">Месяц:</span>
+    <select id="bizMonthSelect" onchange="loadBranches()">
+      <option value="1">Январь</option><option value="2">Февраль</option>
+      <option value="3">Март</option><option value="4">Апрель</option>
+      <option value="5">Май</option><option value="6">Июнь</option>
+      <option value="7">Июль</option><option value="8">Август</option>
+      <option value="9">Сентябрь</option><option value="10">Октябрь</option>
+      <option value="11">Ноябрь</option><option value="12">Декабрь</option>
+    </select>
+  </div>
+  <div id="bizLoading"><div class="loading-box"><div class="spinner"></div><p>Загрузка филиалов...</p></div></div>
+  <div id="bizError" style="display:none;"></div>
+  <div id="bizOverviewContent" style="display:none;">
+    <div class="card-gradient">
+      <div style="text-align:center;font-size:16px;font-weight:700;margin-bottom:14px;">Сеть из 10 ателье</div>
+      <div class="stats-grid" style="grid-template-columns:repeat(3,1fr);">
+        <div class="stat-box" style="cursor:pointer;" onclick="openNetworkDetail('atelie')"><div class="stat-label">Ателье &#x25B8;</div><div class="stat-value" id="ov-atelie">—</div><div class="stat-sub" id="ov-atelie-plan"></div></div>
+        <div class="stat-box" style="cursor:pointer;" onclick="openNetworkDetail('himch')"><div class="stat-label">Химчистка &#x25B8;</div><div class="stat-value" id="ov-himch">—</div><div class="stat-sub" id="ov-himch-plan"></div></div>
+        <div class="stat-box" style="cursor:pointer;" onclick="openNetworkDetail('total')"><div class="stat-label">Всего &#x25B8;</div><div class="stat-value" id="ov-total">—</div><div class="stat-sub" id="ov-total-plan"></div></div>
+        <div class="stat-box" style="cursor:pointer;" onclick="openNetworkDetail('clients')"><div class="stat-label">Клиенты &#x25B8;</div><div class="stat-value" id="ov-clients">—</div><div class="stat-sub" id="ov-avg-check"></div></div>
+        <div class="stat-box" style="cursor:pointer;" onclick="openNetworkDetail('profit')"><div class="stat-label">Прибыль &#x25B8;</div><div class="stat-value" id="ov-profit">—</div><div class="stat-sub">чистая</div></div>
+        <div class="stat-box" style="background:rgba(255,255,255,0.28);border:1px solid rgba(255,255,255,0.5);cursor:pointer;" onclick="openNetworkDetail('forecast')">
+          <div class="stat-label">&#x1F52E; Прогноз &#x25B8;</div>
+          <div class="stat-value" id="ov-forecast">—</div>
+          <div class="stat-sub" id="ov-forecast-sub">тренд</div>
+        </div>
+      </div>
+      <div class="progress-wrap"><div class="progress-fill" id="ov-progress" style="width:0%">0%</div></div>
+    </div>
+  </div>
+  <div id="filialsGrid"></div>
+
+  <!-- ══════ РСч АНАЛИЗАТОР ══════ -->
+  <div class="rsc-divider">
+    <div class="rsc-divider-line"></div>
+    <span>&#x1F4CA; Расчётный счёт</span>
+    <div class="rsc-divider-line"></div>
+  </div>
+  <div class="rsc-header">
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="font-size:16px;font-weight:700;">&#x1F4CA; Счёт ••5630</span>
+      <span id="rscPeriod" style="font-size:11px;color:var(--text-3);"></span>
+    </div>
+    <div style="display:flex;gap:6px;align-items:center;">
+      <button class="fam-btn" onclick="rscOpenImport()" title="Загрузить JSON">&#x1F4E4; JSON</button>
+      <button class="fam-btn" id="rscUndoBtn" onclick="rscUndo()" disabled title="Отменить" style="position:relative;">&#x21A9;</button>
+    </div>
+  </div>
+  <div id="rscBalanceBar" class="rsc-balance-bar"></div>
+  <div id="rscCommission" class="rsc-commission" style="display:none;"></div>
+  <div id="rscMonthPills" class="rsc-month-pills"></div>
+  <div id="rscContent">
+    <div class="fam-empty">Нет данных РСч. Загрузите JSON-файл с транзакциями.</div>
+  </div>
+  <div id="rscTxContent"></div>
+</div>
+
+<!-- ══════ TAB: СЕМЬЯ ══════ -->
+<div class="main-tab" id="tab-family">
+  <div class="fam-header">
+    <span>&#x1F46A; Семейный бюджет</span>
+    <div class="fam-actions">
+      <button class="fam-btn" onclick="openFamilyUpload()" title="Загрузить PDF">&#x1F4E4; PDF</button>
+      <button class="fam-btn" onclick="syncFamily()" title="Синхронизация">&#x2601;&#xFE0F;</button>
+    </div>
+  </div>
+  <div id="familyBudgetBar"></div>
+  <div class="fam-filters">
+    <select id="famMonthFilter" onchange="applyFamilyFilters()"></select>
+    <select id="famOwnerFilter" onchange="applyFamilyFilters()">
+      <option value="all">Все</option>
+      <option value="Кирилл">Кирилл</option>
+      <option value="Алёна">Алёна</option>
+    </select>
+  </div>
+  <div class="fam-subtabs">
+    <button class="fam-subtab active" onclick="switchFamilySubtab('categories',this)">&#x1F4C1; Категории</button>
+    <button class="fam-subtab" onclick="switchFamilySubtab('transactions',this)">&#x1F4DC; Операции</button>
+    <button class="fam-subtab" onclick="switchFamilySubtab('distribution',this)">&#x1F500; Распределение</button>
+  </div>
+  <div id="familyContent"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
+<script src="js/app.js"></script>
+<script src="js/overview.js"></script>
+<script src="js/business.js"></script>
+<script src="js/family.js"></script>
+</body>
+</html>

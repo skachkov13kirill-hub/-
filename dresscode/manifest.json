@@ -1,0 +1,11 @@
+{
+  "name": "DressCode Финансы",
+  "short_name": "DressCode",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#F0F2F8",
+  "theme_color": "#5B4FE8",
+  "icons": [
+    { "src": "icon-512.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
