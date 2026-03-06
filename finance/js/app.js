@@ -164,6 +164,10 @@ function loadState() {
     if (!s.settings.plan) s.settings.plan = 'free';
     if (s.settings.trialStartDate === undefined) s.settings.trialStartDate = null;
     if (!s.settings.trialDays) s.settings.trialDays = 14;
+    // Period selection (Stage 6)
+    if (!s.settings.periodMode) s.settings.periodMode = 'month';
+    if (s.settings.periodStart === undefined) s.settings.periodStart = null;
+    if (s.settings.periodEnd === undefined) s.settings.periodEnd = null;
 
     // Gamification state
     if (!s.gamification) s.gamification = {
@@ -1397,6 +1401,28 @@ function getMonthData(monthKey) {
   return STATE.transactions.filter(t => t.monthKey === monthKey);
 }
 
+// Custom period support: returns data for current month OR custom date range
+function getDataForPeriod() {
+  if (STATE.settings.periodMode === 'custom' && STATE.settings.periodStart && STATE.settings.periodEnd) {
+    return STATE.transactions.filter(t =>
+      t.date >= STATE.settings.periodStart && t.date <= STATE.settings.periodEnd
+    );
+  }
+  return getMonthData(currentMonth);
+}
+
+function getPeriodLabel() {
+  if (STATE.settings.periodMode === 'custom' && STATE.settings.periodStart && STATE.settings.periodEnd) {
+    const fmt = d => {
+      const [y, m, dd] = d.split('-');
+      const shortM = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+      return parseInt(dd) + ' ' + shortM[parseInt(m) - 1];
+    };
+    return fmt(STATE.settings.periodStart) + ' – ' + fmt(STATE.settings.periodEnd);
+  }
+  return monthName(currentMonth);
+}
+
 function getAvailableMonths() {
   const months = new Set(STATE.transactions.map(t => t.monthKey));
   return [...months].sort();
@@ -1910,16 +1936,23 @@ function renderDashboard() {
     currentMonth = months[months.length - 1] || '2025-01';
   }
 
-  const allData = getMonthData(currentMonth);
+  const isCustomPeriod = STATE.settings.periodMode === 'custom' && STATE.settings.periodStart && STATE.settings.periodEnd;
+  const allData = getDataForPeriod();
   const data = applyDashFilter(allData);
 
   // Gamification: update ranks/badges before rendering rank badge
   try { updateGamification(); } catch(e) { console.error('[FinHelper] updateGamification error:', e); }
 
-  // Rank badge next to month name
+  // Rank badge next to month name + period label
   const rankInfo = getRankInfo(STATE.gamification.rank);
-  document.getElementById('month-name').innerHTML = monthName(currentMonth) +
+  document.getElementById('month-name').innerHTML = getPeriodLabel() +
     ' <span class="rank-badge" onclick="event.stopPropagation();showAchievements()" title="' + rankInfo.label + '">' + rankInfo.icon + '</span>';
+
+  // Hide prev/next arrows in custom period mode
+  var prevBtn = document.getElementById('month-prev-btn');
+  var nextBtn = document.getElementById('month-next-btn');
+  if (prevBtn) prevBtn.style.visibility = isCustomPeriod ? 'hidden' : 'visible';
+  if (nextBtn) nextBtn.style.visibility = isCustomPeriod ? 'hidden' : 'visible';
 
   // Update exclude filter badge
   const exclBtn = document.getElementById('dash-exclude-btn');
@@ -1941,12 +1974,18 @@ function renderDashboard() {
     document.getElementById('total-expense').title = `+ ${formatMoney(transfers)} переводов`;
   }
 
-  // Calculate trends (3-month average comparison)
-  const trends = calculateTrends(currentMonth);
-  const totalTrends = calculateTotalTrends(currentMonth);
+  // Calculate trends (3-month average comparison) — only in month mode
+  const trends = isCustomPeriod ? [] : calculateTrends(currentMonth);
+  const totalTrends = isCustomPeriod ? null : calculateTotalTrends(currentMonth);
 
-  // Salary forecast (always use full data for accurate forecast)
-  try { renderForecast(allData, income, expenses, totalTrends); } catch(e) { console.error('[FinHelper] renderForecast error:', e); }
+  // Salary forecast (only in month mode — needs calendar month context)
+  if (!isCustomPeriod) {
+    try { renderForecast(allData, income, expenses, totalTrends); } catch(e) { console.error('[FinHelper] renderForecast error:', e); }
+  } else {
+    // Hide forecast in custom mode
+    var forecastEl = document.getElementById('forecast-section');
+    if (forecastEl) forecastEl.style.display = 'none';
+  }
 
   // Donut chart
   try { renderDonut(data, expenses); } catch(e) { console.error('[FinHelper] renderDonut error:', e); }
@@ -2179,7 +2218,7 @@ function renderCategories(data, totalExpense, trends) {
     const displayName = info.displayName || cat;
     const miscCount = cat === 'Прочее' ? expenseData.filter(t => t.category === 'Прочее').length : 0;
     const miscBadge = miscCount > 0 ? ` <span style="background:var(--red);color:#fff;font-size:0.6rem;padding:1px 5px;border-radius:8px;font-weight:700;vertical-align:middle;">${miscCount}</span>` : '';
-    const clickAction = cat === 'Прочее' ? `showWizardMisc(getMonthData(currentMonth))` : `showCategoryDetail('${cat}')`;
+    const clickAction = cat === 'Прочее' ? `showWizardMiscOrDetail()` : `showCategoryDetail('${cat}')`;
 
     return `
       <div class="cat-item" onclick="${clickAction}">
@@ -4292,7 +4331,7 @@ function clearAllData() {
 // ============================================================
 function showWizardMisc(newTxs) {
   const miscTxs = (newTxs || STATE.transactions).filter(t => t.category === 'Прочее' && t.type === 'expense');
-  if (miscTxs.length < 5) return; // Not worth showing for few items
+  if (miscTxs.length === 0) return;
 
   // Group by merchant (first 25 chars of description)
   const groups = {};
@@ -4328,6 +4367,18 @@ function showWizardMisc(newTxs) {
   });
   document.getElementById('wizard-misc-list').innerHTML = html;
   document.getElementById('modal-wizard-misc').classList.add('active');
+}
+
+// Wrapper: opens WizardMisc or falls back to CategoryDetail for "Прочее"
+function showWizardMiscOrDetail() {
+  const periodData = typeof getDataForPeriod === 'function' ? getDataForPeriod() : getMonthData(currentMonth);
+  const miscTxs = periodData.filter(t => t.category === 'Прочее' && t.type === 'expense');
+  if (miscTxs.length === 0) return;
+  showWizardMisc(periodData);
+  // Fallback if wizard didn't open (e.g. no groups formed)
+  if (!document.getElementById('modal-wizard-misc').classList.contains('active')) {
+    showCategoryDetail('Прочее');
+  }
 }
 
 function applyWizardMisc() {
@@ -4756,7 +4807,10 @@ function renderAnalytics() {
   const container = document.getElementById('analytics-content');
   if (!container) return;
 
-  const txExpenses = STATE.transactions.filter(t => t.type === 'expense');
+  const TRANSFER_CATS = ['Переводы', 'Перевод себе'];
+  const txExpenses = STATE.transactions.filter(t =>
+    t.type === 'expense' && !TRANSFER_CATS.includes(t.category)
+  );
 
   // Собираем данные по всем месяцам
   const byMonth = {};        // monthKey -> total
@@ -4828,7 +4882,7 @@ function renderAnalytics() {
   // 1. Структура расходов (stacked bar)
   html += '<div class="card" style="padding:16px;">';
   html += '<div style="font-weight:600;margin-bottom:4px;">📊 Структура расходов по месяцам</div>';
-  html += '<div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:12px;">Топ-8 категорий — как меняется доля каждой</div>';
+  html += '<div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:12px;">Топ категорий — как меняется доля каждой</div>';
   html += '<canvas id="analyticsStackedChart" height="220"></canvas>';
   html += '</div>';
 
@@ -4880,7 +4934,88 @@ function renderAnalytics() {
   });
   html += '</div>';
 
-  // 5. Сводка
+  // 5. Доходы vs Расходы
+  html += '<div class="card" style="padding:16px;">';
+  html += '<div style="font-weight:600;margin-bottom:4px;">💰 Доходы vs Расходы</div>';
+  html += '<div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:12px;">Баланс и накопления по месяцам</div>';
+  html += '<canvas id="analyticsIncExpChart" height="200"></canvas>';
+  // Summary stats
+  var totalIncome = 0, totalExpForStat = 0;
+  allMonths.forEach(function(mk) {
+    var md = getMonthData(mk);
+    totalIncome += md.filter(function(t) { return t.type === 'income'; }).reduce(function(s, t) { return s + t.amount; }, 0);
+    totalExpForStat += byMonth[mk] || 0;
+  });
+  var avgSavingsRate = totalIncome > 0 ? Math.round((totalIncome - totalExpForStat) / totalIncome * 100) : 0;
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:12px;">';
+  html += '<div style="text-align:center;padding:8px;background:rgba(0,184,148,0.1);border-radius:10px;"><div style="font-size:0.65rem;color:var(--text-muted);">Доход</div><div style="font-weight:700;font-size:0.8rem;color:#00B894;">' + formatMoney(totalIncome) + '</div></div>';
+  html += '<div style="text-align:center;padding:8px;background:rgba(225,112,85,0.1);border-radius:10px;"><div style="font-size:0.65rem;color:var(--text-muted);">Расход</div><div style="font-weight:700;font-size:0.8rem;color:#E17055;">' + formatMoney(totalExpForStat) + '</div></div>';
+  html += '<div style="text-align:center;padding:8px;background:rgba(108,92,231,0.1);border-radius:10px;"><div style="font-size:0.65rem;color:var(--text-muted);">Сбережения</div><div style="font-weight:700;font-size:0.8rem;color:#6C5CE7;">' + avgSavingsRate + '%</div></div>';
+  html += '</div>';
+  html += '</div>';
+
+  // 6. Расходы по дням недели
+  html += '<div class="card" style="padding:16px;">';
+  html += '<div style="font-weight:600;margin-bottom:4px;">📊 Расходы по дням недели</div>';
+  html += '<div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:12px;">Когда вы тратите больше всего?</div>';
+  var dayNames = ['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
+  var dayTotals = [0,0,0,0,0,0,0];
+  var dayCounts = [0,0,0,0,0,0,0];
+  txExpenses.forEach(function(tx) {
+    if (!tx.date) return;
+    var d = new Date(tx.date + 'T12:00:00'); // noon to avoid TZ issues
+    var dow = (d.getDay() + 6) % 7; // Monday=0
+    dayTotals[dow] += tx.amount;
+    dayCounts[dow]++;
+  });
+  var numMonths = Math.max(allMonths.length, 1);
+  var dayAvgs = dayTotals.map(function(t) { return Math.round(t / numMonths); });
+  var maxDayAvg = Math.max.apply(null, dayAvgs.concat([1]));
+  var peakDay = dayAvgs.indexOf(maxDayAvg);
+  dayNames.forEach(function(name, i) {
+    var pct = Math.round(dayAvgs[i] / maxDayAvg * 100);
+    var isWeekend = i >= 5;
+    var barColor = isWeekend ? '#E17055' : '#00B894';
+    html += '<div style="display:flex;align-items:center;gap:8px;padding:4px 0;">';
+    html += '<div style="width:24px;font-size:0.75rem;font-weight:600;color:' + (isWeekend ? '#E17055' : 'var(--text-primary)') + ';">' + name + '</div>';
+    html += '<div style="flex:1;background:var(--border);border-radius:4px;height:18px;overflow:hidden;">';
+    html += '<div style="width:' + pct + '%;height:100%;background:' + barColor + ';opacity:' + Math.max(0.35, pct / 100) + ';border-radius:4px;"></div></div>';
+    html += '<div style="font-size:0.75rem;font-weight:600;min-width:65px;text-align:right;">' + formatMoney(dayAvgs[i]) + '</div>';
+    html += '</div>';
+  });
+  html += '<div style="font-size:0.7rem;color:var(--text-muted);margin-top:8px;text-align:center;">Больше всего тратите: <b>' + dayNames[peakDay] + '</b> (в среднем ' + formatMoney(maxDayAvg) + '/мес)</div>';
+  html += '</div>';
+
+  // 7. Все категории (clickable grid)
+  html += '<div class="card" style="padding:16px;">';
+  html += '<div style="font-weight:600;margin-bottom:4px;">🧩 Все категории</div>';
+  html += '<div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:12px;">Нажмите на категорию для детализации</div>';
+  var allCatTotals = {};
+  txExpenses.forEach(function(tx) { allCatTotals[tx.category] = (allCatTotals[tx.category] || 0) + tx.amount; });
+  var sortedCats = Object.entries(allCatTotals).sort(function(a, b) { return b[1] - a[1]; });
+  var totalForGrid = sortedCats.reduce(function(s, e) { return s + e[1]; }, 0) || 1;
+  html += '<div style="display:flex;flex-wrap:wrap;gap:6px;">';
+  sortedCats.forEach(function(entry) {
+    var cat = entry[0], amount = entry[1];
+    var info = CATEGORIES[cat] || { emoji: '❓', color: '#636E72' };
+    var displayCat = info.displayName || cat;
+    var pctVal = (amount / totalForGrid * 100);
+    var escapedCat = cat.replace(/'/g, "\\'");
+    html += '<div onclick="showCategoryDetail(\'' + escapedCat + '\')" style="' +
+      'background:' + info.color + '15;border:1px solid ' + info.color + '30;' +
+      'border-radius:10px;padding:10px 8px;cursor:pointer;' +
+      'min-width:calc(33% - 4px);flex:1;' +
+      'text-align:center;transition:transform 0.15s;" ontouchstart="this.style.transform=\'scale(0.96)\'" ontouchend="this.style.transform=\'scale(1)\'">';
+    html += '<div style="font-size:1.3rem;">' + info.emoji + '</div>';
+    html += '<div style="font-size:0.7rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:2px 0;">' + displayCat + '</div>';
+    html += '<div style="font-size:0.8rem;font-weight:700;">' + formatMoney(amount) + '</div>';
+    html += '<div style="font-size:0.6rem;color:var(--text-muted);">' + pctVal.toFixed(1) + '%</div>';
+    html += '</div>';
+  });
+  html += '</div>';
+  html += '</div>';
+
+  // 8. Сводка
   html += '<div class="card" style="padding:16px;text-align:center;">';
   html += '<div style="font-size:0.75rem;color:var(--text-secondary);">Проанализировано ' + txExpenses.length + ' расходов за ' + allMonths.length + ' мес.</div>';
   html += '</div>';
@@ -4896,14 +5031,15 @@ function renderAnalyticsCharts(byMonth, byMonthCat, dailyByMonth, allMonths) {
 
   var catColors = [
     '#6C5CE7', '#E17055', '#00B894', '#FDCB6E', '#0984E3',
-    '#E84393', '#00CEC9', '#636E72', '#D63031', '#A29BFE'
+    '#E84393', '#00CEC9', '#636E72', '#D63031', '#A29BFE',
+    '#74B9FF', '#FD79A8'
   ];
 
-  // ===== 1. Stacked bar — category share by month =====
+  // ===== 1. Stacked bar — category share by month (top-12) =====
   var topCats = Object.entries(byMonthCat)
     .map(function(e) { return [e[0], Object.values(e[1]).reduce(function(a, b) { return a + b; }, 0)]; })
     .sort(function(a, b) { return b[1] - a[1]; })
-    .slice(0, 8)
+    .slice(0, 12)
     .map(function(e) { return e[0]; });
 
   var stackedCtx = document.getElementById('analyticsStackedChart');
@@ -4996,6 +5132,41 @@ function renderAnalyticsCharts(byMonth, byMonthCat, dailyByMonth, allMonths) {
         scales: {
           y: { beginAtZero: true, ticks: { callback: function(v) { return formatMoney(v); }, color: textColor }, grid: { color: 'rgba(128,128,128,0.1)' } },
           x: { ticks: { color: textColor }, grid: { display: false } }
+        }
+      }
+    });
+  }
+
+  // ===== 3. Income vs Expenses chart =====
+  var incExpCtx = document.getElementById('analyticsIncExpChart');
+  if (incExpCtx) {
+    var incData = allMonths.map(function(mk) {
+      var md = getMonthData(mk);
+      return md.filter(function(t) { return t.type === 'income'; }).reduce(function(s, t) { return s + t.amount; }, 0);
+    });
+    var expData = allMonths.map(function(mk) { return byMonth[mk] || 0; });
+    var savingsData = allMonths.map(function(mk, i) { return incData[i] - expData[i]; });
+    var textColor2 = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#6B7280';
+
+    new Chart(incExpCtx, {
+      type: 'bar',
+      data: {
+        labels: allMonths.map(function(m) { return monthName(m).replace(/\s\d{4}$/, ''); }),
+        datasets: [
+          { label: 'Доходы', data: incData, backgroundColor: 'rgba(0,184,148,0.5)', borderRadius: 4 },
+          { label: 'Расходы', data: expData, backgroundColor: 'rgba(225,112,85,0.5)', borderRadius: 4 },
+          { label: 'Баланс', data: savingsData, type: 'line', borderColor: '#6C5CE7', pointBackgroundColor: '#6C5CE7', borderWidth: 2, pointRadius: 3, fill: false }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 10, font: { size: 10 }, color: textColor2 } },
+          tooltip: { callbacks: { label: function(ctx) { return ctx.dataset.label + ': ' + formatMoney(ctx.raw); } } }
+        },
+        scales: {
+          y: { beginAtZero: true, ticks: { callback: function(v) { return (v / 1000) + 'k'; }, color: textColor2 }, grid: { color: 'rgba(128,128,128,0.1)' } },
+          x: { ticks: { color: textColor2 }, grid: { display: false } }
         }
       }
     });
@@ -5160,6 +5331,13 @@ async function shareReport() {
 //  MONTH NAVIGATION
 // ============================================================
 function changeMonth(dir) {
+  // If in custom period mode, switch back to month mode first
+  if (STATE.settings.periodMode === 'custom') {
+    STATE.settings.periodMode = 'month';
+    STATE.settings.periodStart = null;
+    STATE.settings.periodEnd = null;
+    saveState();
+  }
   const months = getAvailableMonths();
   const idx = months.indexOf(currentMonth);
   const newIdx = idx + dir;
@@ -5172,6 +5350,119 @@ function changeMonth(dir) {
     currentMonth = months[newIdx];
     renderDashboard();
   }
+}
+
+// ============================================================
+//  PERIOD PICKER
+// ============================================================
+function openPeriodPicker() {
+  const isCustom = STATE.settings.periodMode === 'custom';
+  const months = getAvailableMonths();
+
+  let html = '';
+
+  // Mode toggle
+  html += '<div style="display:flex;gap:8px;margin-bottom:16px;">';
+  html += '<span class="filter-chip ' + (!isCustom ? 'active' : '') + '" onclick="setPeriodMode(\'month\')" style="flex:1;text-align:center;">Месяц</span>';
+  html += '<span class="filter-chip ' + (isCustom ? 'active' : '') + '" onclick="setPeriodMode(\'custom\')" style="flex:1;text-align:center;">Произвольный</span>';
+  html += '</div>';
+
+  if (!isCustom) {
+    // Month grid
+    html += '<div class="period-grid">';
+    months.forEach(function(mk) {
+      var active = mk === currentMonth ? ' period-month-active' : '';
+      html += '<div class="period-month-cell' + active + '" onclick="selectPeriodMonth(\'' + mk + '\')">' + monthName(mk) + '</div>';
+    });
+    html += '</div>';
+  } else {
+    // Date range inputs
+    html += '<div style="display:flex;gap:12px;margin-bottom:16px;">';
+    html += '<div style="flex:1;"><div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px;">С</div>';
+    html += '<input type="date" id="period-start" value="' + (STATE.settings.periodStart || '') + '" style="width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);font-size:0.9rem;"></div>';
+    html += '<div style="flex:1;"><div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:4px;">По</div>';
+    html += '<input type="date" id="period-end" value="' + (STATE.settings.periodEnd || '') + '" style="width:100%;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--bg-secondary);color:var(--text-primary);font-size:0.9rem;"></div>';
+    html += '</div>';
+
+    // Quick presets
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px;">';
+    html += '<span class="filter-chip" onclick="setPeriodPreset(\'7d\')">7 дней</span>';
+    html += '<span class="filter-chip" onclick="setPeriodPreset(\'14d\')">14 дней</span>';
+    html += '<span class="filter-chip" onclick="setPeriodPreset(\'30d\')">30 дней</span>';
+    html += '<span class="filter-chip" onclick="setPeriodPreset(\'90d\')">3 месяца</span>';
+    html += '<span class="filter-chip" onclick="setPeriodPreset(\'salary\')">💰 До зарплаты</span>';
+    html += '</div>';
+
+    html += '<button onclick="applyCustomPeriod()" style="width:100%;padding:12px;border:none;border-radius:12px;background:var(--accent);color:#fff;font-size:0.95rem;font-weight:600;cursor:pointer;">Применить</button>';
+  }
+
+  document.getElementById('period-picker-content').innerHTML = html;
+  document.getElementById('modal-period-picker').classList.add('active');
+}
+
+function setPeriodMode(mode) {
+  if (mode === 'month') {
+    STATE.settings.periodMode = 'month';
+    STATE.settings.periodStart = null;
+    STATE.settings.periodEnd = null;
+    saveState();
+  } else {
+    STATE.settings.periodMode = 'custom';
+  }
+  openPeriodPicker(); // re-render
+}
+
+function selectPeriodMonth(mk) {
+  STATE.settings.periodMode = 'month';
+  STATE.settings.periodStart = null;
+  STATE.settings.periodEnd = null;
+  currentMonth = mk;
+  saveState();
+  closeModal('modal-period-picker');
+  renderDashboard();
+}
+
+function setPeriodPreset(preset) {
+  var today = new Date();
+  var start, end;
+  if (preset === '7d') {
+    end = today;
+    start = new Date(today); start.setDate(start.getDate() - 6);
+  } else if (preset === '14d') {
+    end = today;
+    start = new Date(today); start.setDate(start.getDate() - 13);
+  } else if (preset === '30d') {
+    end = today;
+    start = new Date(today); start.setDate(start.getDate() - 29);
+  } else if (preset === '90d') {
+    end = today;
+    start = new Date(today); start.setDate(start.getDate() - 89);
+  } else if (preset === 'salary') {
+    var salaryDate = parseInt(STATE.settings.salaryDate) || 25;
+    var d = new Date(today);
+    if (d.getDate() >= salaryDate) {
+      start = new Date(d.getFullYear(), d.getMonth(), salaryDate);
+    } else {
+      start = new Date(d.getFullYear(), d.getMonth() - 1, salaryDate);
+    }
+    end = today;
+  }
+  var fmt = function(d) { return d.toISOString().substring(0, 10); };
+  document.getElementById('period-start').value = fmt(start);
+  document.getElementById('period-end').value = fmt(end);
+}
+
+function applyCustomPeriod() {
+  var s = document.getElementById('period-start').value;
+  var e = document.getElementById('period-end').value;
+  if (!s || !e) { toast('Укажите обе даты'); return; }
+  if (s > e) { toast('Начало должно быть раньше конца'); return; }
+  STATE.settings.periodMode = 'custom';
+  STATE.settings.periodStart = s;
+  STATE.settings.periodEnd = e;
+  saveState();
+  closeModal('modal-period-picker');
+  renderDashboard();
 }
 
 // ============================================================

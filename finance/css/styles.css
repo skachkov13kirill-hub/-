@@ -869,3 +869,30 @@ body {
 .stories-modal .modal-close:hover {
   background: rgba(0,0,0,0.5);
 }
+
+/* ============ PERIOD PICKER ============ */
+.period-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+.period-month-cell {
+  padding: 10px 6px;
+  border-radius: 10px;
+  text-align: center;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  transition: all 0.2s;
+  border: 1px solid transparent;
+}
+.period-month-cell:active {
+  transform: scale(0.95);
+}
+.period-month-active {
+  background: var(--accent) !important;
+  color: #fff !important;
+  border-color: var(--accent);
+}

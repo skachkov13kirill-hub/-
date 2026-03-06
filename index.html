@@ -69,9 +69,9 @@
 <div class="screen" id="screen-dashboard">
   <!-- Month selector -->
   <div class="month-selector">
-    <button onclick="changeMonth(-1)">◀</button>
-    <div class="month-name" id="month-name">Январь 2025</div>
-    <button onclick="changeMonth(1)">▶</button>
+    <button id="month-prev-btn" onclick="changeMonth(-1)">◀</button>
+    <div class="month-name" id="month-name" onclick="openPeriodPicker()" style="cursor:pointer;">Январь 2025</div>
+    <button id="month-next-btn" onclick="changeMonth(1)">▶</button>
   </div>
 
   <!-- Dashboard filter: toggleable types -->
@@ -364,6 +364,16 @@
     <div style="font-size:0.85rem;color:var(--text-secondary);">Глубокий анализ расходов за все месяцы</div>
   </div>
   <div id="analytics-content"></div>
+</div>
+
+<!-- ============ MODAL: Period Picker ============ -->
+<div class="modal-overlay" id="modal-period-picker" onclick="if(event.target===this)closeModal('modal-period-picker')">
+  <div class="modal" style="max-height:85vh;overflow-y:auto;">
+    <button class="modal-close" onclick="closeModal('modal-period-picker')">✕</button>
+    <div class="modal-handle"></div>
+    <h3 style="margin-bottom:12px;">📅 Выбор периода</h3>
+    <div id="period-picker-content"></div>
+  </div>
 </div>
 
 <!-- ============ BOTTOM NAV ============ -->
