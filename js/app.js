@@ -6,7 +6,8 @@ const APP_KEY = 'financeHelper_v1';
 
 // Deterministic hash for transaction IDs (deduplication-safe)
 function txHash(bank, date, time, amount, desc) {
-  const str = `${bank}_${date}_${time}_${amount}_${(desc || '').substring(0, 40)}`;
+  const norm = (desc || '').toUpperCase().replace(/\s+/g, ' ').trim().substring(0, 40);
+  const str = `${bank}_${date}_${time}_${amount}_${norm}`;
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const c = str.charCodeAt(i);
@@ -163,6 +164,76 @@ function loadState() {
     if (!s.settings.plan) s.settings.plan = 'free';
     if (s.settings.trialStartDate === undefined) s.settings.trialStartDate = null;
     if (!s.settings.trialDays) s.settings.trialDays = 14;
+
+    // Gamification state
+    if (!s.gamification) s.gamification = {
+      rank: 'novice',
+      monthsInBudget: 0,
+      badges: [],
+      streak: { current: 0, best: 0 },
+      totalSaved: 0,
+      monthHistory: {},   // { '2026-01': { inBudget: true, saved: 5000 }, ... }
+      lastRank: null,
+      rankUpPending: false // flag to show rank-up animation
+    };
+
+    // Migration v2: re-classify transfer types for existing transactions (BUG-4 fix)
+    if (!s._migrationTransferV2) {
+      let migrated = 0;
+      for (const tx of s.transactions) {
+        if (tx.category === 'Перевод себе') continue; // already correct (e.g. from autoMatch)
+        const info = classifyTransferType(tx.description, tx.bankCategory, tx.type === 'income');
+        if (info) {
+          if (info.type !== tx.type) { tx.type = info.type; migrated++; }
+          if (info.category && info.category !== tx.category) { tx.category = info.category; migrated++; }
+          else if (info.type === 'transfer' && tx.category === 'Прочее') { tx.category = 'Переводы'; migrated++; }
+        }
+        // Also re-categorize transactions that are in 'Прочее' (BUG-3 partial fix on load)
+        if (tx.category === 'Прочее') {
+          const newCat = categorizeTransaction(tx.description, tx.bankCategory);
+          if (newCat !== 'Прочее') { tx.category = newCat; migrated++; }
+        }
+      }
+      s._migrationTransferV2 = true;
+      if (migrated > 0) console.log(`[FinHelper] Migration v2: updated ${migrated} transactions`);
+    }
+
+    // Migration v3: re-hash txIds with normalized desc (BUG-2 fix)
+    // Old txHash didn't normalize case → same tx could get different IDs → duplicates on re-upload
+    if (!s._migrationHashV3) {
+      const oldIds = new Set();
+      let rehashed = 0;
+      for (const tx of s.transactions) {
+        oldIds.add(tx.id);
+        // Re-compute ID with normalized hash
+        const prefix = tx.id.split('_').slice(0, 3).join('_'); // e.g. "sber_25.01.2026_10:06"
+        // Extract bank, date, time, amount from the stored data
+        const bankPrefix = tx.bank === 'Сбербанк' ? 'sber' : tx.bank === 'Тинькофф' ? 'tink' : 'csv';
+        const dateStr = tx.date ? tx.date.split('-').reverse().join('.') : '';
+        const amountStr = tx.amount ? tx.amount.toString() : '';
+        const newHash = txHash(bankPrefix, dateStr, tx.time || '', amountStr, tx.description || '');
+        const newId = bankPrefix + '_' + dateStr + '_' + (tx.time || '') + '_' + newHash;
+        if (newId !== tx.id) {
+          tx._oldId = tx.id; // keep old ID for reference
+          tx.id = newId;
+          rehashed++;
+        }
+      }
+      // Deduplicate after re-hashing (same new ID = duplicate)
+      const seen = new Set();
+      const deduped = [];
+      for (const tx of s.transactions) {
+        if (!seen.has(tx.id)) {
+          seen.add(tx.id);
+          deduped.push(tx);
+        }
+      }
+      const removed = s.transactions.length - deduped.length;
+      s.transactions = deduped;
+      s._migrationHashV3 = true;
+      if (rehashed > 0 || removed > 0) console.log(`[FinHelper] Migration v3: rehashed ${rehashed}, removed ${removed} duplicates`);
+    }
+
     return s;
   }
   catch(e) { return defaultState(); }
@@ -246,7 +317,7 @@ const CATEGORIES = {
   'Переводы': { emoji: '💸', color: '#B2BEC3' },
   'Автомобиль': { emoji: '⛽', color: '#2D3436' },
   'Коммуналка': { emoji: '🏢', color: '#0984E3' },
-  'Прочее': { emoji: '❓', color: '#636E72' },
+  'Прочее': { emoji: '📥', color: '#636E72', displayName: 'Разобрать' },
   'Долг выдан': { emoji: '🤝', color: '#FDCB6E' },
   'Долг возврат': { emoji: '💰', color: '#00B894' },
   'Наличные расход': { emoji: '💵', color: '#E17055' },
@@ -478,6 +549,60 @@ const MERCHANT_RULES = [
   { patterns: ['BOWLING','БОУЛИНГ','БАТУТ','TRAMPOLINE','КВЕСТ','QUEST'], cat: 'Развлечения' },
   { patterns: ['ПАРК РАЗВЛЕЧЕНИЙ','АТТРАКЦИОН','ЗООПАРК','ZOO','ПЛАНЕТАРИЙ'], cat: 'Развлечения' },
   { patterns: ['КАТОК','SKATING','БИЛЕТ','TICKET'], cat: 'Развлечения' },
+
+  // --- Сбер-специфические паттерны (BUG-3 fix) ---
+  // Продукты (SberPay / MAPP_ variants)
+  { patterns: ['SBERBANK_ONL@IN_PAY RUS MOSKVA PYATEROCHKA','SBERBANK_ONL@IN_PAY RUS MOSKVA 5KA'], cat: 'Продукты' },
+  { patterns: ['SBERBANK_ONL@IN_PAY RUS MOSKVA MAGNIT','SBERBANK_ONL@IN_PAY RUS MOSKVA PEREKRESTOK'], cat: 'Продукты' },
+  { patterns: ['SBERBANK_ONL@IN_PAY RUS MOSKVA LENTA','SBERBANK_ONL@IN_PAY RUS MOSKVA VKUSVILL'], cat: 'Продукты' },
+
+  // Транспорт (SberPay / MAPP_)
+  { patterns: ['CITY MOBILE','CITIMOBIL','СИТИ МОБИЛ'], cat: 'Транспорт' },
+  { patterns: ['SBERBANK_ONL@IN_PAY RUS MOSKVA YANDEX'], cat: 'Транспорт' },
+
+  // Автомобиль (SberPay)
+  { patterns: ['BP_NEFTEPRODUKTY','BP NEFTEPRODUKTY','BP_NEFTEPROD','BRITISH PETROLEUM'], cat: 'Автомобиль' },
+  { patterns: ['NESTE','НЕСТЕ','EKA_','ЕКА_'], cat: 'Автомобиль' },
+
+  // Красота (SberPay)
+  { patterns: ['LETUAL','ЛЭТУАЛЬ','ЛЕТУАЛЬ','L\'ETOILE'], cat: 'Красота' },
+  { patterns: ['PODRUZHKA','ПОДРУЖКА','ИЛЬ ДЕ БОТЭ','ILDEBOTE'], cat: 'Красота' },
+
+  // Дети
+  { patterns: ['DETSKIY MIR','ДЕТСКИЙ МИР','ДОЧКИ СЫНОЧКИ','ДЕТМИР'], cat: 'Дети' },
+
+  // Кредиты / банковские услуги (Сбер)
+  { patterns: ['PLATI CHASTYAMI','ПЛАТИ ЧАСТЯМИ','РАССРОЧК','INSTALLMENT'], cat: 'Кредиты' },
+  { patterns: ['КОМИССИЯ ЗА','ПЛАТА ЗА ОБСЛУЖ','ГОДОВОЕ ОБСЛУЖ'], cat: 'Кредиты' },
+  { patterns: ['ПОГАШЕНИЕ ПРОЦЕНТ','МИНИМАЛЬНЫЙ ПЛАТЁЖ','МИНИМАЛЬНЫЙ ПЛАТЕЖ'], cat: 'Кредиты' },
+
+  // Благотворительность (Сбер)
+  { patterns: ['NETMONET','NETMONET.COM','ПОДПИСКА СБЕР ВМЕСТЕ'], cat: 'Благотворительность' },
+
+  // Кэшбэк / бонусы — убрать из расходов будет позже, пока в Прочее
+  { patterns: ['SP THANKYOU','СПАСИБО','CASHBACK','КЭШБЭК','КЕШБЭК'], cat: 'Прочее' },
+  { patterns: ['SBERPAY','SBER PAY'], cat: 'Прочее' }, // SberPay без конкретного мерчанта
+
+  // Дополнительные СБП-паттерны
+  { patterns: ['БЫСТРЫХ ПЛАТЕЖЕЙ','СИСТЕМА БЫСТРЫХ','СБП'], cat: 'Переводы' },
+
+  // Дополнительные магазины/сервисы
+  { patterns: ['PINGVIN','ПИНГВИН','ХИМЧИСТ'], cat: 'Дом' },
+  { patterns: ['ЧИСТЮЛЯ','CHISTULYA'], cat: 'Дом' },
+  { patterns: ['ЦВЕТЫ','FLOWERS','ФЛОРИСТ','FLORIST','БУКЕТ'], cat: 'Прочее' },
+  { patterns: ['ФОТО','PHOTO','ФОТОГРАФ'], cat: 'Развлечения' },
+  { patterns: ['ПОЧТА РОССИ','POCHTA','CDEK','СДЭК','BOXBERRY','БОКСБЕРРИ'], cat: 'Прочее' },
+  { patterns: ['МЕГАМАРТ','MEGAMART','МАГНОЛИЯ','MAGNOLIA'], cat: 'Продукты' },
+  { patterns: ['MIRATORG','МИРАТОРГ'], cat: 'Продукты' },
+  { patterns: ['MYASNOV','МЯСНОВ'], cat: 'Продукты' },
+  { patterns: ['РЫБНЫЙ','SEAFOOD'], cat: 'Продукты' },
+  { patterns: ['ВКУСНО И ТОЧКА','ROSTICS','РОСТИКС'], cat: 'Еда вне дома' },
+  { patterns: ['IL PATIO','ИЛ ПАТИО','PLANET SUSHI','ПЛАНЕТА СУШИ'], cat: 'Еда вне дома' },
+  { patterns: ['МОСИГРА','HOBBY','ХОББИ','КНИГА','BOOK','ЧИТАЙ-ГОРОД','ЧИТАЙ ГОРОД'], cat: 'Развлечения' },
+  { patterns: ['APTEKA.RU','ЕАПТЕКА','EAPTEKA','АПТЕКИ СТОЛИЧКИ'], cat: 'Здоровье' },
+  { patterns: ['РОСГОССТРАХ','ROSGOSSTRAH','ТИНЬКОФФ СТРАХОВ'], cat: 'Страхование' },
+  { patterns: ['МЕГАФОН БАНК','TELE2 BANK'], cat: 'Подписки и связь' },
+  { patterns: ['DOMCLICK','ДОМКЛИК','ЦИАН','CIAN','ЯНДЕКС НЕДВИЖИМ'], cat: 'Жильё' },
 ];
 
 function categorizeTransaction(desc, bankCat) {
@@ -495,43 +620,154 @@ function categorizeTransaction(desc, bankCat) {
     }
   }
 
+  // 2b. Strip MAPP_SBERBANK prefix and re-check (BUG-3: Sber wraps merchant names)
+  if (upper.includes('MAPP_') || upper.includes('ONL@IN')) {
+    const cleaned = upper
+      .replace(/^MAPP_/i, '')
+      .replace(/SBERBANK_?/gi, '')
+      .replace(/ONL@IN_?PAY/gi, '')
+      .replace(/\s+RUS\s+\w+/i, '')
+      .replace(/\s+\d{3}\s+\d{8,}/g, '')
+      .replace(/\s+/g, ' ').trim();
+    for (const rule of MERCHANT_RULES) {
+      for (const pat of rule.patterns) {
+        if (cleaned.includes(pat.toUpperCase())) return rule.cat;
+      }
+    }
+  }
+
   // 3. Bank category (Sber gives these)
   if (bankCat) {
     const catMap = {
       'Супермаркеты': 'Продукты',
+      'Продукты': 'Продукты',
+      'Ресторан': 'Еда вне дома',
       'Рестораны и кафе': 'Еда вне дома',
+      'Рестораны': 'Еда вне дома',
       'Фастфуд': 'Еда вне дома',
       'Транспорт': 'Транспорт',
       'Такси': 'Транспорт',
       'Автомобиль': 'Автомобиль',
+      'Топливо': 'Автомобиль',
+      'АЗС': 'Автомобиль',
       'Здоровье и красота': 'Здоровье',
+      'Здоровье': 'Здоровье',
       'Аптеки': 'Здоровье',
+      'Красота': 'Красота',
       'Все для дома': 'Дом',
       'Всё для дома': 'Дом',
+      'Дом и ремонт': 'Дом',
       'Одежда и обувь': 'Одежда',
+      'Одежда': 'Одежда',
       'Коммунальные платежи': 'Коммуналка',
       'Связь, интернет': 'Подписки и связь',
+      'Связь': 'Подписки и связь',
+      'Интернет': 'Подписки и связь',
       'Коммунальные платежи, связь, интернет.': 'Коммуналка',
       'Развлечения': 'Развлечения',
       'Образование': 'Образование',
+      'Маркетплейсы': 'Маркетплейсы',
       'Перевод с карты': 'Переводы',
       'Перевод на карту': 'Переводы',
       'Перевод СБП': 'Переводы',
-      // 'Оплата по QR–коду СБП' — не мапим, пусть merchant rules разберут по описанию
+      'Оплата по QR-коду СБП': 'Прочее', // пусть merchant rules разберут по описанию
+      'Оплата по QR–коду СБП': 'Прочее',
       'Прочие операции': 'Прочее',
       'Прочие расходы': 'Прочее',
+      'Другое': 'Прочее',
+      'Животные': 'Животные',
+      'Путешествия': 'Путешествия',
+      'Электроника': 'Электроника',
+      'Страхование': 'Страхование',
+      'Кредиты': 'Кредиты',
+      'Дети': 'Дети',
     };
     for (const [key, val] of Object.entries(catMap)) {
       if (bankCat.includes(key)) return val;
     }
   }
 
-  // 4. Keyword detection for transfers
+  // 4. Keyword detection for transfers / self-transfers
+  if (upper.includes('KOPILKA') || upper.includes('КОПИЛКА') ||
+      upper.includes('KARTA-VKLAD') || upper.includes('KARTA VKLAD') ||
+      upper.includes('КАРТА-ВКЛАД') || upper.includes('КАРТА ВКЛАД') ||
+      upper.includes('ПОПОЛНЕНИЕ ВКЛАД') || upper.includes('НАКОПИТЕЛЬН') ||
+      upper.includes('МЕЖДУ СВОИМИ') || upper.includes('ПЕРЕВОД НА ВКЛАД') ||
+      upper.includes('СО ВКЛАДА') || upper.includes('НА ВКЛАД')) return 'Перевод себе';
   if (upper.includes('ПЕРЕВОД') || upper.includes('ПЕРЕВЕЛ') || upper.includes('TRANSFER')) return 'Переводы';
   if (upper.includes('ПОПОЛНЕНИЕ') || upper.includes('БЫСТРЫХ ПЛАТЕЖЕЙ')) return 'Переводы';
-  if (upper.includes('KOPILKA') || upper.includes('КОПИЛКА')) return 'Переводы';
 
   return 'Прочее';
+}
+
+// Clean transaction description for display (UX-1)
+// Strips Sber MAPP_ prefixes, card numbers, city codes etc.
+function cleanDescription(desc) {
+  if (!desc) return '';
+  let d = desc;
+  d = d.replace(/^MAPP_/i, '');
+  d = d.replace(/SBERBANK_?/gi, '');
+  d = d.replace(/ONL@IN_?PAY/gi, '');
+  d = d.replace(/\s+RUS\s+[A-ZА-ЯЁ]+(\s+[A-ZА-ЯЁ]+)?/gi, ''); // RUS MOSKVA, RUS SAINT PETER
+  d = d.replace(/\s+\d{3}\s+\d{8,}/g, ''); // country code + auth: 643 48037769
+  d = d.replace(/\*{4}\d{4}/g, ''); // card mask ****1234
+  d = d.replace(/\s+\d{6}$/g, ''); // trailing auth code
+  d = d.replace(/\bMCC\d+/gi, ''); // MCC codes
+  d = d.replace(/_/g, ' '); // underscores to spaces
+  d = d.replace(/\s+/g, ' ').trim();
+  // Capitalize first letter
+  if (d.length > 0) d = d.charAt(0).toUpperCase() + d.slice(1);
+  return d;
+}
+
+// Detect internal transfers (self-transfers and general transfers)
+// Returns { type, category } or null (no override)
+function classifyTransferType(desc, bankCat, isIncome) {
+  const upper = (desc || '').toUpperCase();
+  const bankUpper = (bankCat || '').toUpperCase();
+
+  // Self-transfer patterns (between own accounts)
+  const selfPatterns = [
+    'KOPILKA', 'КОПИЛКА',
+    'KARTA-VKLAD', 'KARTA VKLAD', 'КАРТА-ВКЛАД', 'КАРТА ВКЛАД',
+    'ПОПОЛНЕНИЕ ВКЛАДА', 'ПОПОЛНЕНИЕ СЧЁТА', 'ПОПОЛНЕНИЕ СЧЕТА',
+    'ПЕРЕВОД МЕЖДУ СЧЕТАМИ', 'МЕЖДУ СВОИМИ СЧЕТАМИ', 'МЕЖДУ СВОИМИ',
+    'НАКОПИТЕЛЬНЫЙ СЧЁТ', 'НАКОПИТЕЛЬНЫЙ СЧЕТ', 'НАКОПИТЕЛЬН',
+    'СБЕРЕГАТЕЛЬНЫЙ СЧЁТ', 'СБЕРЕГАТЕЛЬНЫЙ СЧЕТ',
+    'ПЕРЕВОД НА ВКЛАД', 'ПЕРЕВОД СО ВКЛАДА',
+    'СО ВКЛАДА', 'НА ВКЛАД',
+    'ВНУТРИБАНКОВСКИЙ ПЕРЕВОД', 'ВНУТРЕННИЙ ПЕРЕВОД',
+  ];
+
+  for (const pat of selfPatterns) {
+    if (upper.includes(pat)) return { type: 'transfer', category: 'Перевод себе' };
+  }
+
+  // SBOL/SberOnline transfers to self (patterns specific to own-account transfers)
+  if ((upper.includes('SBOL') || upper.includes('СБОЛ')) &&
+      (upper.includes('PEREVOD') || upper.includes('ПЕРЕВОД')) &&
+      (upper.includes('МЕЖДУ') || upper.includes('СВОИМИ') || upper.includes('СОБСТВ'))) {
+    return { type: 'transfer', category: 'Перевод себе' };
+  }
+
+  // Bank category hints for general transfers
+  if (bankUpper.includes('ПЕРЕВОД С КАРТЫ') || bankUpper.includes('ПЕРЕВОД НА КАРТУ') ||
+      bankUpper.includes('ПЕРЕВОД СБП')) {
+    return { type: 'transfer', category: null }; // general transfer, keep existing category from categorizeTransaction
+  }
+
+  // Description-based general transfer detection
+  if (upper.includes('ПЕРЕВОД') || upper.includes('ПЕРЕВЕЛ') || upper.includes('TRANSFER')) {
+    // Exclude cases that are clearly purchases (e.g. "Перевод СБП" with merchant name)
+    // but still classify as transfer type
+    return { type: 'transfer', category: null };
+  }
+
+  if (upper.includes('ПОПОЛНЕНИЕ') && !isIncome) {
+    return { type: 'transfer', category: 'Перевод себе' };
+  }
+
+  return null; // no override
 }
 
 // ============================================================
@@ -599,8 +835,10 @@ async function parsePDF(file) {
 }
 
 function detectBank(text) {
-  if (text.includes('sberbank.ru') || text.includes('СберБанк') || text.includes('СБЕРБАНК') || text.includes('Выписка по платёжному счёту') || text.includes('Выписка по счёту кредитной карты')) return 'sber';
-  if (text.includes('ТБАНК') || text.includes('TBANK') || text.includes('tbank.ru') || text.includes('Справка о движении средств')) return 'tinkoff';
+  // Search only the header (first 1500 chars) to avoid false matches from transaction descriptions
+  const header = text.substring(0, 1500);
+  if (header.includes('sberbank.ru') || header.includes('СберБанк') || header.includes('СБЕРБАНК') || header.includes('Выписка по платёжному счёту') || header.includes('Выписка по счёту кредитной карты')) return 'sber';
+  if (header.includes('ТБАНК') || header.includes('TBANK') || header.includes('tbank.ru') || header.includes('Т-Банк') || header.includes('Тинькофф') || header.includes('Tinkoff') || header.includes('Справка о движении средств')) return 'tinkoff';
   return null;
 }
 
@@ -615,71 +853,135 @@ function parseSber(text) {
   const transactions = [];
   const lines = text.split('\n').map(l => l.trim()).filter(l => l);
 
-  // Sber PDF.js: each table cell on separate line. Two formats:
-  // DEBIT:  date → time → authcode(6dig) → category → amount → balance → date2 → description...
-  // CREDIT: date → time → category(text) → amount → balance → date2 → authcode → description...
+  // Sber PDF.js extracts table cells in five modes:
+  // MODE A (credit, merged):   "25.01.2026 10:06" / category / amount / balance / "25.01.2026 060393" / description
+  // MODE B (credit, separate): "25.01.2026" / "10:06" / [authcode] / category / amount / balance / date2 / [authcode] / description
+  // MODE C (debit, all-in-one): "27.02.2026 14:31 444516 Перевод СБП" / amount / balance / date2 / description
+  // MODE D (debit, split cells): "31.01.2026 21:13 734687" / category / amount / balance / date2 / description
+  // MODE E (full-line fallback): "27.02.2026 14:31 444516 Перевод СБП 1 125,00 124,09" (all on one line)
 
+  const dateTimeAuthCatRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})\s+\d{6}\s+(.+)$/;
+  const dateTimeAuthOnlyRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})\s+(\d{6})$/;
+  const dateTimeRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})$/;
   const dateRe = /^\d{2}\.\d{2}\.\d{4}$/;
   const timeRe = /^\d{2}:\d{2}$/;
   const authRe = /^\d{6}$/;
+  const dateAuthRe = /^\d{2}\.\d{2}\.\d{4}\s+\d{6}$/;
   const amountRe = /^[\+]?[\d\s]+,\d{2}$/;
   const pageMarkerRe = /^(?:ДАТА|Продолжение|Для проверки|Действителен|www\.sberbank|Выписка по|ВЫПИСКА|Страница \d|Расшифровка)/;
 
-  // Helper: is this a new Sber transaction start?
   function isNewTxStart(idx) {
-    if (idx + 2 >= lines.length) return false;
-    if (!dateRe.test(lines[idx]) || !timeRe.test(lines[idx+1])) return false;
-    // Debit: date+time+authcode
-    if (authRe.test(lines[idx+2])) return true;
-    // Credit: date+time+category(text)+amount+balance
-    if (idx + 4 < lines.length && !dateRe.test(lines[idx+2]) && !authRe.test(lines[idx+2]) &&
-        !amountRe.test(lines[idx+2]) && amountRe.test(lines[idx+3]) && amountRe.test(lines[idx+4])) return true;
+    if (idx >= lines.length) return false;
+    if (dateTimeAuthCatRe.test(lines[idx])) return true;
+    if (dateTimeAuthOnlyRe.test(lines[idx])) return true;
+    if (dateTimeRe.test(lines[idx])) return true;
+    if (idx + 1 < lines.length && dateRe.test(lines[idx]) && timeRe.test(lines[idx + 1])) return true;
     return false;
   }
 
-  for (let i = 0; i < lines.length - 4; i++) {
-    if (!dateRe.test(lines[i])) continue;
-    if (!timeRe.test(lines[i+1])) continue;
+  for (let i = 0; i < lines.length - 2; i++) {
+    let date, time, category, amountLine, balanceLine, descStart;
 
-    const date = lines[i];
-    const time = lines[i+1];
-    let category, amountLine, balanceLine, descStart;
-
-    if (authRe.test(lines[i+2])) {
-      // DEBIT format: date time authcode category amount balance
-      if (i + 5 >= lines.length) continue;
-      category = lines[i+3];
-      if (dateRe.test(category) || amountRe.test(category)) continue;
-      amountLine = lines[i+4];
-      balanceLine = lines[i+5];
-      if (!amountRe.test(amountLine) || !amountRe.test(balanceLine)) continue;
-      descStart = i + 6;
-    } else if (!dateRe.test(lines[i+2]) && !amountRe.test(lines[i+2]) &&
-               i + 4 < lines.length && amountRe.test(lines[i+3]) && amountRe.test(lines[i+4])) {
-      // CREDIT format: date time category amount balance
-      category = lines[i+2];
-      amountLine = lines[i+3];
-      balanceLine = lines[i+4];
-      descStart = i + 5;
+    // MODE C: "27.02.2026 14:31 444516 Перевод СБП" / amount / balance / date2 / description
+    // MODE E fallback: same regex but amounts embedded in category capture
+    const dtacMatch = lines[i].match(dateTimeAuthCatRe);
+    if (dtacMatch) {
+      date = dtacMatch[1];
+      time = dtacMatch[2];
+      const catRaw = dtacMatch[3];
+      if (i + 2 < lines.length && amountRe.test(lines[i + 1]) && amountRe.test(lines[i + 2])) {
+        // MODE C: amounts on next lines
+        category = catRaw;
+        amountLine = lines[i + 1];
+        balanceLine = lines[i + 2];
+        descStart = i + 3;
+      } else {
+        // MODE E: amounts embedded in the same line as category
+        const fullMatch = catRaw.match(/^(.+?)\s+([\+]?\d[\d ]*,\d{2})\s+([\+]?\d[\d ]*,\d{2})$/);
+        if (fullMatch) {
+          category = fullMatch[1];
+          amountLine = fullMatch[2];
+          balanceLine = fullMatch[3];
+          descStart = i + 1;
+        } else {
+          continue;
+        }
+      }
     } else {
-      continue;
+      // MODE D: "31.01.2026 21:13 734687" / category / amount / balance
+      const dtaMatch = lines[i].match(dateTimeAuthOnlyRe);
+      if (dtaMatch) {
+        date = dtaMatch[1];
+        time = dtaMatch[2];
+        if (i + 3 >= lines.length) continue;
+        category = lines[i + 1];
+        if (dateRe.test(category) || amountRe.test(category) || dateTimeRe.test(category) ||
+            dateTimeAuthOnlyRe.test(category) || dateTimeAuthCatRe.test(category) || pageMarkerRe.test(category)) continue;
+        amountLine = lines[i + 2];
+        balanceLine = lines[i + 3];
+        if (!amountRe.test(amountLine) || !amountRe.test(balanceLine)) continue;
+        descStart = i + 4;
+      } else {
+        // MODE A: merged date+time "25.01.2026 10:06"
+        const dtMatch = lines[i].match(dateTimeRe);
+        let nextIdx;
+        if (dtMatch) {
+          date = dtMatch[1];
+          time = dtMatch[2];
+          nextIdx = i + 1;
+        } else if (dateRe.test(lines[i]) && i + 1 < lines.length && timeRe.test(lines[i + 1])) {
+          // MODE B: separate "25.01.2026" + "10:06"
+          date = lines[i];
+          time = lines[i + 1];
+          nextIdx = i + 2;
+        } else {
+          continue;
+        }
+
+        if (nextIdx + 2 >= lines.length) continue;
+
+        if (authRe.test(lines[nextIdx])) {
+          // DEBIT: authcode → category → amount → balance
+          if (nextIdx + 3 >= lines.length) continue;
+          category = lines[nextIdx + 1];
+          if (dateRe.test(category) || amountRe.test(category) || dateTimeRe.test(category)) continue;
+          amountLine = lines[nextIdx + 2];
+          balanceLine = lines[nextIdx + 3];
+          if (!amountRe.test(amountLine) || !amountRe.test(balanceLine)) continue;
+          descStart = nextIdx + 4;
+        } else if (!dateRe.test(lines[nextIdx]) && !amountRe.test(lines[nextIdx]) && !dateTimeRe.test(lines[nextIdx]) &&
+                   nextIdx + 2 < lines.length && amountRe.test(lines[nextIdx + 1]) && amountRe.test(lines[nextIdx + 2])) {
+          // CREDIT: category → amount → balance
+          category = lines[nextIdx];
+          amountLine = lines[nextIdx + 1];
+          balanceLine = lines[nextIdx + 2];
+          descStart = nextIdx + 3;
+        } else {
+          continue;
+        }
+      }
     }
 
     const amountStr = amountLine.replace(/\s/g, '').replace(',', '.');
     const balanceStr = balanceLine.replace(/\s/g, '').replace(',', '.');
 
-    // Collect description
+    // Collect description, skipping date2+authcode
     let desc = '';
     let j = descStart;
-    // Skip date2 and authcode lines
-    if (j < lines.length && dateRe.test(lines[j])) j++;
-    if (j < lines.length && authRe.test(lines[j])) j++;
+    // Skip merged date2+authcode: "25.01.2026 060393"
+    if (j < lines.length && dateAuthRe.test(lines[j])) {
+      j++;
+    } else {
+      // Or skip separate date2 and authcode
+      if (j < lines.length && dateRe.test(lines[j])) j++;
+      if (j < lines.length && authRe.test(lines[j])) j++;
+    }
     // Collect until next transaction or page marker
     while (j < lines.length) {
       const l = lines[j];
       if (isNewTxStart(j)) break;
       if (pageMarkerRe.test(l)) break;
-      if (dateRe.test(l)) { j++; continue; }
+      if (dateRe.test(l) || dateTimeRe.test(l) || dateAuthRe.test(l)) { j++; continue; }
       if (authRe.test(l)) { j++; continue; }
       desc += (desc ? ' ' : '') + l;
       j++;
@@ -700,7 +1002,16 @@ function parseSber(text) {
     const monthKey = yyyy + '-' + mm;
     const isoDate = yyyy + '-' + mm + '-' + dd;
 
-    const cat = categorizeTransaction(desc, category);
+    let cat = categorizeTransaction(desc, category);
+    let type = isIncome ? 'income' : 'expense';
+
+    // Detect transfers (BUG-4 fix)
+    const transferInfo = classifyTransferType(desc, category, isIncome);
+    if (transferInfo) {
+      type = transferInfo.type;
+      if (transferInfo.category) cat = transferInfo.category;
+      else if (type === 'transfer' && cat === 'Прочее') cat = 'Переводы';
+    }
 
     transactions.push({
       id: 'sber_' + date + '_' + time + '_' + txHash('sber', date, time, amountStr, desc),
@@ -708,7 +1019,7 @@ function parseSber(text) {
       time: time,
       monthKey: monthKey,
       amount: amount,
-      type: isIncome ? 'income' : 'expense',
+      type: type,
       description: desc || category,
       bankCategory: category,
       category: cat,
@@ -727,66 +1038,89 @@ function parseTinkoff(text) {
   const transactions = [];
   const lines = text.split('\n').map(l => l.trim()).filter(l => l);
 
-  // Tinkoff PDF.js format: each cell on separate line
-  // Pattern: DATE1 TIME1 DATE2 TIME2 AMOUNT1₽ AMOUNT2₽ DESCRIPTION... CARDNUM
-  // Lines: "31.12.2025" "17:06" "31.12.2025" "17:06" "+20 823.00 ₽" "+20 823.00 ₽"
-  //        "Пополнение. Система" "быстрых платежей" "9971"
+  // Tinkoff PDF.js - two known extraction modes:
+  // MODE A (new, merged): "31.12.2025 31.12.2025" / "+20 823.00" / "+20 823.00" / desc+card+₽ / ₽ / time / time / desc...
+  // MODE B (old, separate): "31.12.2025" / "17:06" / "31.12.2025" / "17:06" / "+20 823.00 ₽" / "+20 823.00 ₽" / desc / "9971"
 
+  const twoDateRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}\.\d{2}\.\d{4})$/;
   const dateRe = /^\d{2}\.\d{2}\.\d{4}$/;
   const timeRe = /^\d{2}:\d{2}$/;
-  const amountRe = /^[+-][\d\s]+\.\d{2}\s*₽$/;
+  const amountNoRubleRe = /^[+-][\d\s]+\.\d{2}$/;
+  const amountWithRubleRe = /^[+-][\d\s]+\.\d{2}\s*₽$/;
+  const amountAnyRe = /^[+-][\d\s]+\.\d{2}\s*₽?$/;
   const cardRe = /^\d{4}$|^—$/;
+  const footerRe = /^(?:АО|БИК|Дата и время|Исх\.|Справка о движении)/;
 
-  for (let i = 0; i < lines.length - 5; i++) {
-    // Pattern: date1, time1, date2, time2, amount1₽, amount2₽
-    if (!dateRe.test(lines[i])) continue;
-    if (!timeRe.test(lines[i+1])) continue;
-    if (!dateRe.test(lines[i+2])) continue;
-    if (!timeRe.test(lines[i+3])) continue;
-    if (!amountRe.test(lines[i+4])) continue;
-    if (!amountRe.test(lines[i+5])) continue;
+  function classifyType(desc, isIncome) {
+    let type = isIncome ? 'income' : 'expense';
+    // Use shared classifyTransferType first
+    const transferInfo = classifyTransferType(desc, null, isIncome);
+    if (transferInfo) {
+      type = transferInfo.type;
+    }
+    // Tinkoff-specific overrides
+    if (desc.includes('Внутрибанковский перевод') || desc.includes('Внутренний перевод')) {
+      type = isIncome ? 'income' : 'transfer';
+    }
+    if (desc.includes('Пополнение') && isIncome) type = 'income';
+    if (desc.includes('Внешний перевод') || desc.includes('Внешний банковский')) type = 'transfer';
+    if (desc.includes('Проценты по кредиту') || desc.includes('Плата за Программу') || desc.includes('Плата за использование')) type = 'expense';
+    return type;
+  }
 
-    const date = lines[i];
-    const time = lines[i+1];
-    const amountLine = lines[i+4];
-    const amountStr = amountLine.replace(/\s/g, '').replace('₽', '');
+  // Try NEW format first: two dates on one line + amounts (with or without ₽)
+  for (let i = 0; i < lines.length - 2; i++) {
+    const dateMatch = lines[i].match(twoDateRe);
+    if (!dateMatch) continue;
+    if (!amountAnyRe.test(lines[i + 1])) continue;
+    if (!amountAnyRe.test(lines[i + 2])) continue;
 
-    // Collect description lines until card number (4 digits) or next transaction
-    let desc = '';
-    let j = i + 6;
-    while (j < lines.length) {
-      var l = lines[j];
-      // Card number = end of this transaction
-      if (cardRe.test(l)) { j++; break; }
-      // Next transaction starts
-      if (dateRe.test(l) && j+1 < lines.length && timeRe.test(lines[j+1]) && j+2 < lines.length && dateRe.test(lines[j+2])) break;
-      // Footer markers
-      if (l.startsWith('АО') || l.startsWith('БИК') || l.startsWith('Дата и время') || l.startsWith('Исх.')) break;
-      desc += (desc ? ' ' : '') + l;
-      j++;
+    const date = dateMatch[1];
+    const amountStr = lines[i + 1].replace(/\s/g, '').replace('₽', '');
+
+    // Find next transaction start (next twoDateRe or footer)
+    let nextTx = lines.length;
+    for (let k = i + 3; k < lines.length; k++) {
+      if (twoDateRe.test(lines[k])) { nextTx = k; break; }
+      if (footerRe.test(lines[k])) { nextTx = k; break; }
     }
 
+    // Collect lines between amounts and next tx, extracting time and filtering noise
+    let time = '';
+    const descParts = [];
+    for (let j = i + 3; j < nextTx; j++) {
+      const l = lines[j];
+      if (footerRe.test(l)) break;
+      if (timeRe.test(l)) { if (!time) time = l; continue; }
+      if (l === '₽') continue;
+      if (cardRe.test(l)) continue;
+      descParts.push(l);
+    }
+
+    let desc = descParts.join(' ');
+    // Clean embedded card+₽: "Описание 9971 ₽ продолжение" → "Описание продолжение"
+    desc = desc.replace(/\s+\d{4}\s*₽/g, '');
+    desc = desc.replace(/\s*₽/g, '');
+    desc = desc.replace(/\s+\d{4}$/g, '');
+    desc = desc.replace(/\s+—$/g, '');
+    // Remove embedded 4-digit card number between words: "Система 9971 быстрых" → "Система быстрых"
+    desc = desc.replace(/\s+\d{4}\s+/g, ' ');
     desc = desc.replace(/\s+/g, ' ').trim();
 
     const isIncome = amountStr.startsWith('+');
     const amount = Math.abs(parseFloat(amountStr));
     if (amount === 0 || isNaN(amount)) continue;
 
-    const parts = date.split('.');
-    var dd = parts[0], mm = parts[1], yyyy = parts[2];
-    var monthKey = yyyy + '-' + mm;
-    var isoDate = yyyy + '-' + mm + '-' + dd;
+    const [dd, mm, yyyy] = date.split('.');
+    const monthKey = yyyy + '-' + mm;
+    const isoDate = yyyy + '-' + mm + '-' + dd;
+    const type = classifyType(desc, isIncome);
+    let cat = categorizeTransaction(desc, null);
 
-    // Detect type
-    var type = isIncome ? 'income' : 'expense';
-    if (desc.includes('Внутрибанковский перевод') || desc.includes('Внутренний перевод')) {
-      type = isIncome ? 'income' : 'transfer';
-    }
-    if (desc.includes('Пополнение')) type = 'income';
-    if (desc.includes('Внешний перевод') || desc.includes('Внешний банковский')) type = 'transfer';
-    if (desc.includes('Проценты по кредиту') || desc.includes('Плата за Программу') || desc.includes('Плата за использование')) type = 'expense';
-
-    var cat = categorizeTransaction(desc, null);
+    // Apply transfer category from classifyTransferType (BUG-4 fix)
+    const transferInfo = classifyTransferType(desc, null, isIncome);
+    if (transferInfo && transferInfo.category) cat = transferInfo.category;
+    else if (type === 'transfer' && cat === 'Прочее') cat = 'Переводы';
 
     transactions.push({
       id: 'tink_' + date + '_' + time + '_' + txHash('tink', date, time, amountStr, desc),
@@ -803,7 +1137,67 @@ function parseTinkoff(text) {
       bank: 'Тинькофф'
     });
 
-    i = j - 1;
+    i = nextTx - 1;
+  }
+
+  // If new format found nothing, try OLD format: date/time/date/time/amount₽/amount₽
+  if (transactions.length === 0) {
+    for (let i = 0; i < lines.length - 5; i++) {
+      if (!dateRe.test(lines[i])) continue;
+      if (!timeRe.test(lines[i+1])) continue;
+      if (!dateRe.test(lines[i+2])) continue;
+      if (!timeRe.test(lines[i+3])) continue;
+      if (!amountWithRubleRe.test(lines[i+4])) continue;
+      if (!amountWithRubleRe.test(lines[i+5])) continue;
+
+      const date = lines[i];
+      const time = lines[i+1];
+      const amountStr = lines[i+4].replace(/\s/g, '').replace('₽', '');
+
+      let desc = '';
+      let j = i + 6;
+      while (j < lines.length) {
+        const l = lines[j];
+        if (cardRe.test(l)) { j++; break; }
+        if (dateRe.test(l) && j+1 < lines.length && timeRe.test(lines[j+1]) && j+2 < lines.length && dateRe.test(lines[j+2])) break;
+        if (footerRe.test(l)) break;
+        desc += (desc ? ' ' : '') + l;
+        j++;
+      }
+
+      desc = desc.replace(/\s+/g, ' ').trim();
+      const isIncome = amountStr.startsWith('+');
+      const amount = Math.abs(parseFloat(amountStr));
+      if (amount === 0 || isNaN(amount)) continue;
+
+      const [dd, mm, yyyy] = date.split('.');
+      const monthKey = yyyy + '-' + mm;
+      const isoDate = yyyy + '-' + mm + '-' + dd;
+      const type = classifyType(desc, isIncome);
+      let cat = categorizeTransaction(desc, null);
+
+      // Apply transfer category from classifyTransferType (BUG-4 fix)
+      const transferInfo = classifyTransferType(desc, null, isIncome);
+      if (transferInfo && transferInfo.category) cat = transferInfo.category;
+      else if (type === 'transfer' && cat === 'Прочее') cat = 'Переводы';
+
+      transactions.push({
+        id: 'tink_' + date + '_' + time + '_' + txHash('tink', date, time, amountStr, desc),
+        date: isoDate,
+        time: time,
+        monthKey: monthKey,
+        amount: amount,
+        type: type,
+        description: desc,
+        bankCategory: null,
+        category: cat,
+        merchant: desc,
+        balance: null,
+        bank: 'Тинькофф'
+      });
+
+      i = j - 1;
+    }
   }
 
   return transactions;
@@ -844,21 +1238,24 @@ async function handleFiles(files) {
 
     try {
       let txs;
+      let text = '';
+      let bank = null;
+
       if (isCSV) {
         // CSV import
-        const csvText = await new Promise((resolve, reject) => {
+        text = await new Promise((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = e => resolve(e.target.result);
           reader.onerror = reject;
           reader.readAsText(file);
         });
         updateProgress(65, 'Разбираю CSV...');
-        txs = parseCSV(csvText);
+        txs = parseCSV(text);
         console.log(`[FinHelper] CSV: Parsed ${txs.length} transactions from ${file.name}`);
       } else {
         // PDF import
-        const text = await parsePDF(file);
-        const bank = detectBank(text);
+        text = await parsePDF(file);
+        bank = detectBank(text);
         if (!bank) {
           toast('Не удалось определить банк. Поддерживаем Сбер и Тинькофф.');
           continue;
@@ -891,7 +1288,8 @@ async function handleFiles(files) {
         STATE.files.push(file.name);
       }
 
-      toast(`${bank === 'sber' ? 'Сбербанк' : 'Тинькофф'}: ${txs.length} операций`);
+      const bankLabel = bank === 'sber' ? 'Сбербанк' : bank === 'tinkoff' ? 'Тинькофф' : 'CSV';
+      toast(`${bankLabel}: ${txs.length} операций`);
       trackEvent('pdf_upload', { bank: bank || 'csv', count: txs.length });
 
     } catch(e) {
@@ -929,10 +1327,12 @@ async function handleFiles(files) {
       const matched = autoMatchTransfers();
       applySmartPatterns();
       showScreen('dashboard');
+      // Show Wow screen summary
+      setTimeout(() => showWowScreen(unique, unique.length, dupeCount), 400);
       // Show wizard if many "Прочее" items in new transactions
-      setTimeout(() => showWizardMisc(allNewTx), 1200);
+      setTimeout(() => showWizardMisc(allNewTx), 2000);
       // Check for smart pattern suggestions
-      setTimeout(() => showSmartPatternSuggestions(), 3000);
+      setTimeout(() => showSmartPatternSuggestions(), 4000);
     }, 800);
   } else {
     if (isOnboarding) {
@@ -979,6 +1379,107 @@ function monthName(key) {
   const [y, m] = key.split('-');
   const names = ['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   return names[parseInt(m) - 1] + ' ' + y;
+}
+
+// ============================================================
+//  AUTO-TRENDS (3-month average comparison)
+// ============================================================
+function getPrevMonths(monthKey, count) {
+  // Returns array of N month keys before the given month
+  const [y, m] = monthKey.split('-').map(Number);
+  const result = [];
+  for (let i = 1; i <= count; i++) {
+    let pm = m - i;
+    let py = y;
+    while (pm <= 0) { pm += 12; py--; }
+    result.push(py + '-' + String(pm).padStart(2, '0'));
+  }
+  return result;
+}
+
+function calculateTrends(targetMonth) {
+  const prevKeys = getPrevMonths(targetMonth, 3);
+  const available = getAvailableMonths();
+  const validPrev = prevKeys.filter(k => available.includes(k));
+
+  if (validPrev.length === 0) return null; // No historical data
+
+  // Aggregate expenses by category for each previous month
+  const monthlyCatTotals = {};
+  for (const mk of validPrev) {
+    const mData = getMonthData(mk).filter(t => t.type === 'expense');
+    for (const t of mData) {
+      if (!monthlyCatTotals[t.category]) monthlyCatTotals[t.category] = {};
+      monthlyCatTotals[t.category][mk] = (monthlyCatTotals[t.category][mk] || 0) + t.amount;
+    }
+  }
+
+  // Current month expenses by category
+  const curData = getMonthData(targetMonth).filter(t => t.type === 'expense');
+  const curCatTotals = {};
+  for (const t of curData) {
+    curCatTotals[t.category] = (curCatTotals[t.category] || 0) + t.amount;
+  }
+
+  // Build trends array
+  const trends = [];
+  const allCats = new Set([...Object.keys(monthlyCatTotals), ...Object.keys(curCatTotals)]);
+
+  for (const cat of allCats) {
+    const monthVals = monthlyCatTotals[cat] || {};
+    const vals = validPrev.map(k => monthVals[k] || 0);
+    const avg3m = vals.reduce((s, v) => s + v, 0) / validPrev.length;
+    const current = curCatTotals[cat] || 0;
+
+    let diffPct = 0;
+    let direction = 'stable'; // ↑ up, ↓ down, → stable
+    if (avg3m > 0) {
+      diffPct = Math.round(((current - avg3m) / avg3m) * 100);
+      if (diffPct > 10) direction = 'up';
+      else if (diffPct < -10) direction = 'down';
+      else direction = 'stable';
+    } else if (current > 0) {
+      diffPct = 100;
+      direction = 'up';
+    }
+
+    trends.push({
+      category: cat,
+      avg3m: Math.round(avg3m),
+      current: Math.round(current),
+      diffPct: diffPct,
+      direction: direction
+    });
+  }
+
+  // Sort by current spending (desc)
+  trends.sort((a, b) => b.current - a.current);
+  return trends;
+}
+
+// Also calculate total income/expense trends
+function calculateTotalTrends(targetMonth) {
+  const prevKeys = getPrevMonths(targetMonth, 3);
+  const available = getAvailableMonths();
+  const validPrev = prevKeys.filter(k => available.includes(k));
+
+  if (validPrev.length === 0) return null;
+
+  let prevIncomes = [], prevExpenses = [];
+  for (const mk of validPrev) {
+    const mData = getMonthData(mk);
+    prevIncomes.push(mData.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0));
+    prevExpenses.push(mData.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0));
+  }
+
+  const avgIncome = prevIncomes.reduce((s, v) => s + v, 0) / validPrev.length;
+  const avgExpense = prevExpenses.reduce((s, v) => s + v, 0) / validPrev.length;
+
+  return {
+    avgIncome: Math.round(avgIncome),
+    avgExpense: Math.round(avgExpense),
+    monthsUsed: validPrev.length
+  };
 }
 
 // ============================================================
@@ -1040,6 +1541,330 @@ function setDashFilter(f) {
 }
 
 // ============================================================
+//  GAMIFICATION — RANK SYSTEM
+// ============================================================
+const RANKS = [
+  { id: 'novice',     label: 'Новичок',    icon: '⭐',  months: 0  },
+  { id: 'controller', label: 'Контролёр',  icon: '⭐⭐', months: 1  },
+  { id: 'bronze',     label: 'Бронза',     icon: '🥉',  months: 3  },
+  { id: 'silver',     label: 'Серебро',    icon: '🥈',  months: 6  },
+  { id: 'gold',       label: 'Золото',     icon: '🥇',  months: 12 },
+  { id: 'diamond',    label: 'Алмаз',      icon: '💎',  months: 24 }
+];
+
+const BADGE_DEFS = [
+  { id: 'first_upload',  icon: '📄', label: 'Первый шаг',     desc: 'Загрузил первую выписку' },
+  { id: 'analyst',       icon: '📊', label: 'Аналитик',       desc: 'Открыл 5 разных категорий' },
+  { id: 'sniper',        icon: '🎯', label: 'Снайпер',        desc: '0 операций в «Прочее»' },
+  { id: 'streak3',       icon: '📱', label: 'Постоянство',    desc: '3 месяца подряд' },
+  { id: 'streak6',       icon: '🔥', label: 'Огонь',          desc: '6 месяцев подряд' },
+  { id: 'budgetmaster',  icon: '🧮', label: 'Бюджетмейстер', desc: '4 месяца подряд в рамках средних' },
+  { id: 'saver',         icon: '💰', label: 'Копилка',        desc: 'Сэкономил 50,000₽ суммарно' },
+  { id: 'categorizer',   icon: '🏷️', label: 'Категоризатор', desc: 'Создал 3 своих правила' },
+  { id: 'multisource',   icon: '🏦', label: 'Мультибанк',     desc: 'Загрузил выписки 2+ банков' }
+];
+
+// Evaluate if a given month was "in budget" (within avg+30% per category, or total <= avg+10%)
+function evaluateMonthBudget(monthKey) {
+  const trends = calculateTrends(monthKey);
+  const totalTrends = calculateTotalTrends(monthKey);
+  if (!trends && !totalTrends) return null; // not enough data
+
+  // Criterion 1: no category exceeds avg by more than 30%
+  let allCatsOk = true;
+  if (trends) {
+    for (const t of trends) {
+      if (t.avg3m > 0 && t.diffPct > 30) { allCatsOk = false; break; }
+    }
+  }
+
+  // Criterion 2: total expenses <= avg + 10%
+  let totalOk = false;
+  if (totalTrends && totalTrends.avgExpense > 0) {
+    const monthExpenses = getMonthData(monthKey).filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    totalOk = monthExpenses <= totalTrends.avgExpense * 1.1;
+  }
+
+  // Either criterion passes
+  const inBudget = allCatsOk || totalOk;
+
+  // Calculate savings
+  const monthData = getMonthData(monthKey);
+  const income = monthData.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+  const expenses = monthData.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+  const saved = income - expenses;
+
+  return { inBudget, saved };
+}
+
+// Recalculate gamification state based on all available data
+function updateGamification() {
+  const g = STATE.gamification;
+  const months = getAvailableMonths();
+
+  // First upload badge
+  if (STATE.transactions.length > 0 && !g.badges.includes('first_upload')) {
+    g.badges.push('first_upload');
+  }
+
+  // Evaluate all months that have enough historical data (need at least 1 prior month)
+  let consecutiveInBudget = 0;
+  let totalSaved = 0;
+
+  for (let i = 0; i < months.length; i++) {
+    const mk = months[i];
+    const result = evaluateMonthBudget(mk);
+    if (result) {
+      g.monthHistory[mk] = { inBudget: result.inBudget, saved: Math.round(result.saved) };
+      if (result.inBudget) consecutiveInBudget++;
+      else consecutiveInBudget = 0;
+      if (result.saved > 0) totalSaved += result.saved;
+    }
+  }
+
+  g.monthsInBudget = consecutiveInBudget;
+  g.totalSaved = Math.round(totalSaved);
+
+  // Determine rank
+  const oldRank = g.rank;
+  let newRank = 'novice';
+  if (STATE.transactions.length > 0) newRank = 'novice';
+  // Diamond: 24 months + savings > 10% consistently
+  if (consecutiveInBudget >= 24 && totalSaved > 0) newRank = 'diamond';
+  else if (consecutiveInBudget >= 12) newRank = 'gold';
+  else if (consecutiveInBudget >= 6) newRank = 'silver';
+  else if (consecutiveInBudget >= 3) newRank = 'bronze';
+  else if (consecutiveInBudget >= 1) newRank = 'controller';
+
+  if (newRank !== oldRank) {
+    const oldIdx = RANKS.findIndex(r => r.id === oldRank);
+    const newIdx = RANKS.findIndex(r => r.id === newRank);
+    if (newIdx > oldIdx) {
+      g.rankUpPending = true;
+      g.lastRank = oldRank;
+    }
+  }
+  g.rank = newRank;
+
+  // Streak (consecutive months with data)
+  let streak = 0;
+  for (let i = months.length - 1; i > 0; i--) {
+    const cur = months[i].split('-').map(Number);
+    const prev = months[i - 1].split('-').map(Number);
+    const expectedPrev = cur[1] === 1 ? [cur[0] - 1, 12] : [cur[0], cur[1] - 1];
+    if (prev[0] === expectedPrev[0] && prev[1] === expectedPrev[1]) {
+      streak++;
+    } else break;
+  }
+  if (months.length > 0) streak++; // count the latest month itself
+  g.streak.current = streak;
+  if (streak > g.streak.best) g.streak.best = streak;
+
+  // Check badges
+  checkBadges(g, months);
+
+  saveState();
+}
+
+function checkBadges(g, months) {
+  // Streak badges
+  if (g.streak.current >= 3 && !g.badges.includes('streak3')) g.badges.push('streak3');
+  if (g.streak.current >= 6 && !g.badges.includes('streak6')) g.badges.push('streak6');
+
+  // Budgetmaster: 4 consecutive months in budget
+  if (g.monthsInBudget >= 4 && !g.badges.includes('budgetmaster')) g.badges.push('budgetmaster');
+
+  // Saver: 50000+ total saved
+  if (g.totalSaved >= 50000 && !g.badges.includes('saver')) g.badges.push('saver');
+
+  // Sniper: 0 in Прочее for current month
+  if (currentMonth) {
+    const monthData = getMonthData(currentMonth);
+    const inMisc = monthData.filter(t => t.type === 'expense' && t.category === 'Прочее').length;
+    if (inMisc === 0 && monthData.length > 0 && !g.badges.includes('sniper')) g.badges.push('sniper');
+  }
+
+  // Categorizer: 3+ custom rules
+  if (Object.keys(STATE.customRules || {}).length >= 3 && !g.badges.includes('categorizer')) g.badges.push('categorizer');
+
+  // Multisource: 2+ different banks
+  const banks = new Set(STATE.transactions.map(t => t.bank).filter(Boolean));
+  if (banks.size >= 2 && !g.badges.includes('multisource')) g.badges.push('multisource');
+
+  // Analyst: 5+ unique categories opened (we track via screen views, but simpler: 5+ expense categories with data)
+  if (currentMonth) {
+    const cats = new Set(getMonthData(currentMonth).filter(t => t.type === 'expense').map(t => t.category));
+    if (cats.size >= 5 && !g.badges.includes('analyst')) g.badges.push('analyst');
+  }
+}
+
+function getRankInfo(rankId) {
+  return RANKS.find(r => r.id === rankId) || RANKS[0];
+}
+
+function getNextRank(rankId) {
+  const idx = RANKS.findIndex(r => r.id === rankId);
+  return idx < RANKS.length - 1 ? RANKS[idx + 1] : null;
+}
+
+function getRankProgress() {
+  const g = STATE.gamification;
+  const current = getRankInfo(g.rank);
+  const next = getNextRank(g.rank);
+  if (!next) return { current, next: null, progress: 100 };
+
+  const monthsNeeded = next.months - current.months;
+  const monthsDone = Math.min(g.monthsInBudget - current.months, monthsNeeded);
+  const progress = monthsNeeded > 0 ? Math.max(0, Math.round((monthsDone / monthsNeeded) * 100)) : 0;
+
+  return { current, next, progress };
+}
+
+// Confetti animation for rank-up
+function showRankUpAnimation(newRankId) {
+  const rank = getRankInfo(newRankId);
+  const overlay = document.createElement('div');
+  overlay.className = 'rankup-overlay';
+  overlay.innerHTML = `
+    <div class="rankup-content">
+      <div class="rankup-confetti" id="rankup-confetti"></div>
+      <div class="rankup-icon">${rank.icon}</div>
+      <div class="rankup-title">Новый ранг!</div>
+      <div class="rankup-rank">${rank.label}</div>
+      <div class="rankup-desc">Продолжайте контролировать расходы!</div>
+      <button class="btn-primary" style="margin-top:16px;width:100%;max-width:200px;" onclick="this.closest('.rankup-overlay').remove()">Отлично!</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // Create confetti particles
+  const confettiEl = document.getElementById('rankup-confetti');
+  const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E9'];
+  for (let i = 0; i < 50; i++) {
+    const particle = document.createElement('div');
+    particle.className = 'confetti-particle';
+    particle.style.left = Math.random() * 100 + '%';
+    particle.style.background = colors[Math.floor(Math.random() * colors.length)];
+    particle.style.animationDelay = Math.random() * 0.5 + 's';
+    particle.style.animationDuration = (1.5 + Math.random() * 2) + 's';
+    confettiEl.appendChild(particle);
+  }
+
+  // Auto-dismiss after 5s
+  setTimeout(() => { if (overlay.parentNode) overlay.remove(); }, 5000);
+}
+
+// Check and show rank-up if pending
+function checkRankUpAnimation() {
+  const g = STATE.gamification;
+  if (g.rankUpPending) {
+    g.rankUpPending = false;
+    saveState();
+    setTimeout(() => showRankUpAnimation(g.rank), 800);
+  }
+}
+
+// Achievements screen
+function showAchievements() {
+  const g = STATE.gamification;
+  const { current, next, progress } = getRankProgress();
+  const months = getAvailableMonths();
+
+  let html = '';
+
+  // Current rank card
+  html += `<div style="text-align:center;padding:16px 0;">
+    <div style="font-size:3rem;">${current.icon}</div>
+    <div style="font-size:1.3rem;font-weight:800;margin:4px 0;">${current.label}</div>`;
+
+  if (next) {
+    html += `<div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:8px;">До «${next.label}» ${next.icon}</div>
+    <div style="background:var(--border);border-radius:8px;height:8px;overflow:hidden;max-width:240px;margin:0 auto;">
+      <div style="height:100%;width:${progress}%;background:var(--accent);border-radius:8px;transition:width 0.5s;"></div>
+    </div>
+    <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">${g.monthsInBudget} из ${next.months} мес. в рамках бюджета</div>`;
+  } else {
+    html += `<div style="font-size:0.8rem;color:var(--accent);margin-bottom:4px;">Максимальный ранг достигнут!</div>`;
+  }
+  html += `</div>`;
+
+  // Stats row
+  html += `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin:12px 0;">
+    <div style="text-align:center;padding:10px;background:var(--bg-primary);border-radius:var(--radius-sm);">
+      <div style="font-size:1.2rem;font-weight:700;">${g.streak.current}</div>
+      <div style="font-size:0.7rem;color:var(--text-muted);">мес. подряд</div>
+    </div>
+    <div style="text-align:center;padding:10px;background:var(--bg-primary);border-radius:var(--radius-sm);">
+      <div style="font-size:1.2rem;font-weight:700;">${g.monthsInBudget}</div>
+      <div style="font-size:0.7rem;color:var(--text-muted);">в бюджете</div>
+    </div>
+    <div style="text-align:center;padding:10px;background:var(--bg-primary);border-radius:var(--radius-sm);">
+      <div style="font-size:1.2rem;font-weight:700;">${g.totalSaved > 0 ? formatMoney(g.totalSaved) : '0 ₽'}</div>
+      <div style="font-size:0.7rem;color:var(--text-muted);">сэкономлено</div>
+    </div>
+  </div>`;
+
+  // Badges
+  html += `<div style="margin-top:16px;"><div style="font-weight:700;font-size:0.95rem;margin-bottom:8px;">🏅 Достижения</div>`;
+  html += `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">`;
+  for (const bd of BADGE_DEFS) {
+    const earned = g.badges.includes(bd.id);
+    html += `<div style="padding:10px;border-radius:var(--radius-sm);background:${earned ? 'var(--bg-primary)' : 'var(--bg-secondary)'};opacity:${earned ? '1' : '0.4'};border:1px solid ${earned ? 'var(--accent)' : 'var(--border)'};">
+      <div style="font-size:1.3rem;">${bd.icon}</div>
+      <div style="font-size:0.8rem;font-weight:600;margin-top:2px;">${bd.label}</div>
+      <div style="font-size:0.7rem;color:var(--text-muted);">${bd.desc}</div>
+      ${earned ? '<div style="font-size:0.65rem;color:var(--accent);margin-top:2px;">✅ Получено</div>' : ''}
+    </div>`;
+  }
+  html += `</div></div>`;
+
+  // Month history
+  if (months.length > 0 && Object.keys(g.monthHistory).length > 0) {
+    html += `<div style="margin-top:16px;"><div style="font-weight:700;font-size:0.95rem;margin-bottom:8px;">📅 История месяцев</div>`;
+    html += `<div style="display:flex;flex-wrap:wrap;gap:6px;">`;
+    for (const mk of months) {
+      const h = g.monthHistory[mk];
+      const [, mm] = mk.split('-');
+      const shortName = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'][parseInt(mm) - 1];
+      if (h) {
+        const icon = h.inBudget ? '✅' : '❌';
+        const bg = h.inBudget ? 'var(--green-bg)' : 'var(--red-bg)';
+        html += `<div style="padding:6px 10px;border-radius:8px;background:${bg};text-align:center;min-width:50px;" title="${monthName(mk)}: ${h.inBudget ? 'в бюджете' : 'перерасход'}">
+          <div style="font-size:0.7rem;color:var(--text-muted);">${shortName}</div>
+          <div style="font-size:1rem;">${icon}</div>
+        </div>`;
+      } else {
+        html += `<div style="padding:6px 10px;border-radius:8px;background:var(--bg-secondary);text-align:center;min-width:50px;" title="${monthName(mk)}">
+          <div style="font-size:0.7rem;color:var(--text-muted);">${shortName}</div>
+          <div style="font-size:1rem;">⏳</div>
+        </div>`;
+      }
+    }
+    html += `</div></div>`;
+  }
+
+  // Rank ladder
+  html += `<div style="margin-top:16px;"><div style="font-weight:700;font-size:0.95rem;margin-bottom:8px;">🏆 Ранги</div>`;
+  for (const r of RANKS) {
+    const isCurrent = r.id === g.rank;
+    const isPast = RANKS.indexOf(r) < RANKS.findIndex(x => x.id === g.rank);
+    html += `<div style="display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;${isCurrent ? 'background:var(--accent-light);border:1px solid var(--accent);' : ''}opacity:${isPast || isCurrent ? '1' : '0.4'};">
+      <div style="font-size:1.3rem;width:36px;text-align:center;">${r.icon}</div>
+      <div style="flex:1;">
+        <div style="font-size:0.85rem;font-weight:${isCurrent ? '700' : '500'};">${r.label}</div>
+        <div style="font-size:0.7rem;color:var(--text-muted);">${r.months > 0 ? r.months + ' мес. в бюджете' : 'Загрузил выписку'}</div>
+      </div>
+      ${isCurrent ? '<div style="font-size:0.75rem;color:var(--accent);font-weight:600;">← Вы здесь</div>' : ''}
+      ${isPast ? '<div style="color:var(--green);">✓</div>' : ''}
+    </div>`;
+  }
+  html += `</div>`;
+
+  document.getElementById('achievements-content').innerHTML = html;
+  document.getElementById('modal-achievements').classList.add('active');
+}
+
+// ============================================================
 //  DASHBOARD RENDER
 // ============================================================
 function renderDashboard() {
@@ -1050,7 +1875,14 @@ function renderDashboard() {
 
   const allData = getMonthData(currentMonth);
   const data = applyDashFilter(allData);
-  document.getElementById('month-name').textContent = monthName(currentMonth);
+
+  // Gamification: update ranks/badges before rendering rank badge
+  updateGamification();
+
+  // Rank badge next to month name
+  const rankInfo = getRankInfo(STATE.gamification.rank);
+  document.getElementById('month-name').innerHTML = monthName(currentMonth) +
+    ' <span class="rank-badge" onclick="event.stopPropagation();showAchievements()" title="' + rankInfo.label + '">' + rankInfo.icon + '</span>';
 
   // Update exclude filter badge
   const exclBtn = document.getElementById('dash-exclude-btn');
@@ -1058,7 +1890,8 @@ function renderDashboard() {
   if (exclBtn) exclBtn.textContent = exclCount > 0 ? '⚙️ Фильтр (' + exclCount + ')' : '⚙️ Фильтр';
   if (exclBtn) exclBtn.style.background = exclCount > 0 ? 'var(--accent-light)' : 'var(--yellow-bg)';
 
-  const income = data.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+  // BUG-1 fix: income ALWAYS from allData (not filtered), so it's never 0 due to dashToggles
+  const income = allData.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
   const expenses = data.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
   const transfers = data.filter(t => t.type === 'transfer').reduce((s, t) => s + t.amount, 0);
   const selfTransfers = data.filter(t => t.category === 'Перевод себе').reduce((s, t) => s + t.amount, 0);
@@ -1071,14 +1904,21 @@ function renderDashboard() {
     document.getElementById('total-expense').title = `+ ${formatMoney(transfers)} переводов`;
   }
 
+  // Calculate trends (3-month average comparison)
+  const trends = calculateTrends(currentMonth);
+  const totalTrends = calculateTotalTrends(currentMonth);
+
   // Salary forecast (always use full data for accurate forecast)
-  renderForecast(allData, income, expenses);
+  renderForecast(allData, income, expenses, totalTrends);
 
   // Donut chart
   renderDonut(data, expenses);
 
   // Categories list
-  renderCategories(data, expenses);
+  renderCategories(data, expenses, trends);
+
+  // Insight phrases (smart comments)
+  renderInsight(data, income, expenses, trends, totalTrends);
 
   // Shock fact
   renderShock(data, income, expenses);
@@ -1094,9 +1934,12 @@ function renderDashboard() {
 
   // Goal progress card
   renderGoalDashCard();
+
+  // Check for rank-up animation
+  checkRankUpAnimation();
 }
 
-function renderForecast(data, income, expenses) {
+function renderForecast(data, income, expenses, totalTrends) {
   const salaryDate = parseInt(STATE.settings.salaryDate) || 25;
   const [y, m] = currentMonth.split('-').map(Number);
   const daysInMonth = new Date(y, m, 0).getDate();
@@ -1137,6 +1980,43 @@ function renderForecast(data, income, expenses) {
     status.innerHTML = `<span style="color:var(--green)">✅ До ${salaryDate}-го хватит! Можно тратить ${formatMoney(dailyLimit)} в день</span>`;
   } else {
     status.innerHTML = `<span style="color:var(--red)">⚠️ При таком темпе может не хватить. Сократите до ${formatMoney(dailyLimit)} в день</span>`;
+  }
+
+  // Trend comparison with historical average
+  const trendEl = document.getElementById('forecast-trend');
+  if (trendEl) {
+    if (totalTrends && totalTrends.avgExpense > 0) {
+      const avgExp = totalTrends.avgExpense;
+      let trendHtml = '';
+
+      if (isCurrentMonth && daysPassed > 0) {
+        // Show projected vs average
+        trendHtml += `<div style="color:var(--text-muted);">📈 Прогноз к концу месяца: <b>${formatMoney(Math.round(projectedTotal))}</b></div>`;
+        trendHtml += `<div style="color:var(--text-muted);">📊 Обычно вы тратите: <b>${formatMoney(avgExp)}</b></div>`;
+        const diff = Math.round(projectedTotal) - avgExp;
+        const diffPct = Math.round((diff / avgExp) * 100);
+        if (diff > 0) {
+          trendHtml += `<div style="color:var(--red);">↑ На ${formatMoney(diff)} больше обычного (${diffPct > 0 ? '+' : ''}${diffPct}%)</div>`;
+        } else if (diff < 0) {
+          trendHtml += `<div style="color:var(--green);">↓ На ${formatMoney(Math.abs(diff))} меньше обычного (${diffPct}%)</div>`;
+        } else {
+          trendHtml += `<div style="color:var(--text-muted);">→ Примерно как обычно</div>`;
+        }
+      } else if (!isCurrentMonth) {
+        // Past month: compare actual vs average
+        const diff = expenses - avgExp;
+        const diffPct = Math.round((diff / avgExp) * 100);
+        if (Math.abs(diffPct) > 10) {
+          const color = diff > 0 ? 'var(--red)' : 'var(--green)';
+          const arrow = diff > 0 ? '↑' : '↓';
+          trendHtml += `<div style="color:${color};">${arrow} ${diff > 0 ? 'На ' + formatMoney(diff) + ' больше' : 'На ' + formatMoney(Math.abs(diff)) + ' меньше'} обычного (${diffPct > 0 ? '+' : ''}${diffPct}%)</div>`;
+        }
+      }
+
+      trendEl.innerHTML = trendHtml;
+    } else {
+      trendEl.innerHTML = '';
+    }
   }
 }
 
@@ -1196,7 +2076,7 @@ function drillDownCategory(cat) {
   showCategoryDetail(cat);
 }
 
-function renderCategories(data, totalExpense) {
+function renderCategories(data, totalExpense, trends) {
   const expenseData = data.filter(t => t.type === 'expense');
   const catTotals = {};
   for (const tx of expenseData) {
@@ -1205,6 +2085,12 @@ function renderCategories(data, totalExpense) {
 
   const sorted = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
   const maxVal = sorted[0]?.[1] || 1;
+
+  // Build trends lookup
+  const trendMap = {};
+  if (trends) {
+    for (const t of trends) trendMap[t.category] = t;
+  }
 
   const html = sorted.map(([cat, amount]) => {
     const info = CATEGORIES[cat] || { emoji: '❓', color: '#636E72' };
@@ -1217,13 +2103,52 @@ function renderCategories(data, totalExpense) {
       const budgetColor = budgetPct >= 90 ? 'var(--red)' : budgetPct >= 70 ? 'var(--yellow)' : 'var(--green)';
       budgetHtml = `<div style="margin-top:2px;height:3px;background:var(--border);border-radius:2px;overflow:hidden;"><div style="height:100%;width:${budgetPct}%;background:${budgetColor};border-radius:2px;transition:width 0.3s;"></div></div><div style="font-size:0.65rem;color:${budgetColor};margin-top:1px;">${budgetPct}% от ${formatMoney(budget)}</div>`;
     }
+
+    // Trend indicator with colored progress bar
+    let trendHtml = '';
+    const tr = trendMap[cat];
+    if (tr && tr.avg3m > 0) {
+      let arrow, color, label;
+      if (tr.direction === 'up') {
+        arrow = '↑'; color = 'var(--red)'; label = '+' + tr.diffPct + '%';
+      } else if (tr.direction === 'down') {
+        arrow = '↓'; color = 'var(--green)'; label = tr.diffPct + '%';
+      } else {
+        arrow = '→'; color = 'var(--text-muted)'; label = '~' + tr.diffPct + '%';
+      }
+      trendHtml = `<div style="font-size:0.65rem;color:${color};margin-top:1px;">${arrow} ${label} <span style="color:var(--text-muted);">(обычно ${formatMoney(tr.avg3m)})</span></div>`;
+    }
+
+    // Color zones for progress bar: green(<70%), yellow(70-90%), red(>90%) of trend average
+    let barColor = info.color;
+    let remainText = '';
+    if (tr && tr.avg3m > 0) {
+      const trendPct = Math.round((amount / tr.avg3m) * 100);
+      if (trendPct < 70) barColor = 'var(--green)';
+      else if (trendPct < 90) barColor = 'var(--yellow)';
+      else if (trendPct < 110) barColor = info.color;
+      else barColor = 'var(--red)';
+      const remaining = tr.avg3m - amount;
+      if (remaining > 0) {
+        remainText = `<div style="font-size:0.6rem;color:var(--text-muted);margin-top:1px;">Осталось ${formatMoney(remaining)} из ${formatMoney(tr.avg3m)}</div>`;
+      }
+    }
+
+    // "Разобрать" instead of "Прочее" — special display + click opens wizard
+    const displayName = info.displayName || cat;
+    const miscCount = cat === 'Прочее' ? expenseData.filter(t => t.category === 'Прочее').length : 0;
+    const miscBadge = miscCount > 0 ? ` <span style="background:var(--red);color:#fff;font-size:0.6rem;padding:1px 5px;border-radius:8px;font-weight:700;vertical-align:middle;">${miscCount}</span>` : '';
+    const clickAction = cat === 'Прочее' ? `showWizardMisc(getMonthData(currentMonth))` : `showCategoryDetail('${cat}')`;
+
     return `
-      <div class="cat-item" onclick="showCategoryDetail('${cat}')">
+      <div class="cat-item" onclick="${clickAction}">
         <div class="cat-emoji">${info.emoji}</div>
         <div class="cat-info">
-          <div class="cat-name">${cat}</div>
-          <div class="cat-bar-wrap"><div class="cat-bar" style="width:${barW}%;background:${info.color}"></div></div>
+          <div class="cat-name">${displayName}${miscBadge}</div>
+          <div class="cat-bar-wrap"><div class="cat-bar" style="width:${barW}%;background:${barColor}"></div></div>
           ${budgetHtml}
+          ${remainText}
+          ${trendHtml}
         </div>
         <div class="cat-amount">
           <span class="amount">${formatMoney(amount)}</span>
@@ -1233,6 +2158,84 @@ function renderCategories(data, totalExpense) {
   }).join('');
 
   document.getElementById('all-categories').innerHTML = html;
+}
+
+// ============================================================
+//  INSIGHT PHRASES (smart dashboard comments)
+// ============================================================
+function renderInsight(data, income, expenses, trends, totalTrends) {
+  const card = document.getElementById('insight-card');
+  const content = document.getElementById('insight-content');
+  if (!card || !content) return;
+
+  const insights = [];
+  const expenseData = data.filter(t => t.type === 'expense');
+
+  // 1. Most stable category (lowest diffPct)
+  if (trends && trends.length > 0) {
+    const stableCats = trends.filter(t => t.avg3m > 0 && Math.abs(t.diffPct) <= 10 && t.current > 0);
+    if (stableCats.length > 0) {
+      const best = stableCats[0];
+      const info = CATEGORIES[best.category] || {};
+      insights.push(`${info.emoji || '📊'} <b>${best.category}</b> — ваша самая стабильная категория ✅`);
+    }
+  }
+
+  // 2. Fastest growing category (3+ months trend)
+  if (trends) {
+    const growing = trends.filter(t => t.direction === 'up' && t.diffPct > 20 && t.current > 0).sort((a, b) => b.diffPct - a.diffPct);
+    if (growing.length > 0) {
+      const g = growing[0];
+      const info = CATEGORIES[g.category] || {};
+      insights.push(`${info.emoji || '📈'} <b>${g.category}</b> выросли на ${g.diffPct}% по сравнению с обычным 📈`);
+    }
+  }
+
+  // 3. Biggest single expense this month
+  if (expenseData.length > 0) {
+    const biggest = expenseData.reduce((max, t) => t.amount > max.amount ? t : max, expenseData[0]);
+    if (biggest.amount > 0) {
+      const cleanDesc = typeof cleanDescription === 'function' ? cleanDescription(biggest.description) : biggest.description;
+      insights.push(`💸 Самая крупная трата: <b>${cleanDesc}</b> — ${formatMoney(biggest.amount)}`);
+    }
+  }
+
+  // 4. Savings insight
+  if (income > 0 && expenses > 0) {
+    const savingsRate = Math.round(((income - expenses) / income) * 100);
+    if (savingsRate > 20) {
+      insights.push(`💰 Вы откладываете ${savingsRate}% дохода — отличный результат!`);
+    } else if (savingsRate > 0) {
+      insights.push(`💡 Уровень накоплений: ${savingsRate}% дохода. Цель — минимум 20%`);
+    }
+  }
+
+  // 5. "Прочее" reminder
+  const miscCount = expenseData.filter(t => t.category === 'Прочее').length;
+  if (miscCount > 5) {
+    insights.push(`📥 <b>${miscCount}</b> ${pluralize(miscCount, 'операция', 'операции', 'операций')} в «Разобрать» — нажмите, чтобы распределить`);
+  }
+
+  // 6. Category reduction congratulation
+  if (trends) {
+    const reduced = trends.filter(t => t.direction === 'down' && t.diffPct < -20 && t.avg3m > 0);
+    if (reduced.length > 0) {
+      const r = reduced[0];
+      const info = CATEGORIES[r.category] || {};
+      insights.push(`${info.emoji || '↓'} <b>${r.category}</b> — сократили на ${Math.abs(r.diffPct)}%. Так держать! 🎉`);
+    }
+  }
+
+  if (insights.length === 0) {
+    card.style.display = 'none';
+    return;
+  }
+
+  // Show up to 2 random insights
+  const shuffled = insights.sort(() => Math.random() - 0.5);
+  const selected = shuffled.slice(0, 2);
+  content.innerHTML = selected.map(i => `<div style="padding:4px 0;">${i}</div>`).join('');
+  card.style.display = 'block';
 }
 
 function renderShock(data, income, expenses) {
@@ -1350,9 +2353,11 @@ function renderComparison(expenses, income) {
   if (idx <= 0) { card.style.display = 'none'; return; }
 
   var prevMonth = months[idx - 1];
-  var prevData = applyDashFilter(getMonthData(prevMonth));
+  var prevAllData = getMonthData(prevMonth);
+  var prevData = applyDashFilter(prevAllData);
   var prevExp = prevData.filter(function(t) { return t.type === 'expense'; }).reduce(function(s, t) { return s + t.amount; }, 0);
-  var prevInc = prevData.filter(function(t) { return t.type === 'income'; }).reduce(function(s, t) { return s + t.amount; }, 0);
+  // BUG-1 fix: income from unfiltered data
+  var prevInc = prevAllData.filter(function(t) { return t.type === 'income'; }).reduce(function(s, t) { return s + t.amount; }, 0);
 
   if (prevExp === 0 && prevInc === 0) { card.style.display = 'none'; return; }
 
@@ -1407,13 +2412,35 @@ function renderStreak() {
   var emoji = streak >= 6 ? '🔥' : streak >= 3 ? '⚡' : '📅';
   var msg = streak >= 6 ? 'Невероятная серия!' : streak >= 3 ? 'Отличная серия!' : 'Хорошее начало!';
 
+  // Build visual streak bar (last 6 months)
+  var shortNames = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  var streakBarHtml = '<div style="display:flex;gap:4px;margin-top:8px;">';
+  var showMonths = months.slice(-6);
+  for (var j = 0; j < showMonths.length; j++) {
+    var mk = showMonths[j];
+    var mm = parseInt(mk.split('-')[1]);
+    var isInStreak = months.indexOf(mk) >= months.length - streak;
+    var bg = isInStreak ? 'var(--accent)' : 'var(--border)';
+    streakBarHtml += '<div style="flex:1;text-align:center;">'
+      + '<div style="height:6px;border-radius:3px;background:' + bg + ';margin-bottom:2px;"></div>'
+      + '<div style="font-size:0.6rem;color:var(--text-muted);">' + shortNames[mm - 1] + '</div>'
+      + '</div>';
+  }
+  streakBarHtml += '</div>';
+
+  // Next milestone
+  var nextMilestone = streak < 3 ? 3 : streak < 6 ? 6 : streak < 12 ? 12 : 24;
+  var milestoneText = streak < nextMilestone ? '<div style="font-size:0.7rem;color:var(--accent);margin-top:4px;">До ' + nextMilestone + ' мес. осталось: ' + (nextMilestone - streak) + '</div>' : '';
+
   card.innerHTML = '<div style="display:flex;align-items:center;gap:12px;padding:4px 0;">'
     + '<div style="font-size:2rem;">' + emoji + '</div>'
     + '<div style="flex:1;">'
     + '<div style="font-weight:700;font-size:0.95rem;">Серия: ' + streak + ' мес. подряд</div>'
-    + '<div style="font-size:0.8rem;color:var(--text-secondary);">' + msg + ' Загружайте выписки каждый месяц!</div>'
+    + '<div style="font-size:0.8rem;color:var(--text-secondary);">' + msg + '</div>'
+    + milestoneText
     + '</div>'
-    + '</div>';
+    + '</div>'
+    + streakBarHtml;
   card.style.display = 'block';
 }
 
@@ -1466,10 +2493,10 @@ function renderCategoryDetail() {
   const info = CATEGORIES[cat] || { emoji: '❓', color: '#636E72' };
   const total = data.reduce((s, t) => s + t.amount, 0);
 
-  // Group by merchant
+  // Group by merchant (use cleaned description for display)
   const merchants = {};
   for (const tx of data) {
-    const key = tx.description.substring(0, 30);
+    const key = cleanDescription(tx.description).substring(0, 30);
     if (!merchants[key]) merchants[key] = { amount: 0, count: 0, txIds: [] };
     merchants[key].amount += tx.amount;
     merchants[key].count++;
@@ -1532,7 +2559,7 @@ function renderCategoryDetail() {
         return `
         <div class="tx-item" data-txid="${tx.id.replace(/"/g, '&quot;')}" onclick="openRecat('${escapedId}')">
           <div class="tx-info">
-            <div class="tx-desc" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55vw;">${tx.description}</div>
+            <div class="tx-desc" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:55vw;">${cleanDescription(tx.description)}</div>
             <div class="tx-cat">${tx.date} ${tx.time || ''}</div>
           </div>
           <div class="tx-amount amount-expense">${formatMoney(tx.amount)}</div>
@@ -1585,7 +2612,9 @@ function renderTransactions() {
   if (search) {
     filtered = filtered.filter(t =>
       t.description.toLowerCase().includes(search) ||
-      t.category.toLowerCase().includes(search)
+      cleanDescription(t.description).toLowerCase().includes(search) ||
+      t.category.toLowerCase().includes(search) ||
+      (t.merchant || '').toLowerCase().includes(search)
     );
   }
 
@@ -1650,7 +2679,7 @@ function renderTxItem(tx) {
   return '<div class="tx-item" data-txid="' + tx.id.replace(/"/g, '&quot;') + '" onclick="openRecat(\'' + escapedId + '\')">'
     + '<div class="tx-emoji">' + info.emoji + '</div>'
     + '<div class="tx-info">'
-    + '<div class="tx-desc">' + manualBadge + tx.description + '</div>'
+    + '<div class="tx-desc">' + manualBadge + cleanDescription(tx.description) + '</div>'
     + '<div class="tx-cat">' + tx.category + ' · ' + (tx.bank || '') + commentBadge + selfBadge + '</div>'
     + (tx.comment ? '<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">💬 ' + tx.comment + '</div>' : '')
     + dateLabel
@@ -2419,6 +3448,41 @@ function openForecastDetail() {
     </div>`;
   }
 
+  // Historical comparison (3-month avg)
+  const totalTrends = calculateTotalTrends(currentMonth);
+  if (totalTrends && totalTrends.avgExpense > 0) {
+    const avgExp = totalTrends.avgExpense;
+    const avgInc = totalTrends.avgIncome;
+    const expDiff = expenses - avgExp;
+    const expDiffPct = Math.round((expDiff / avgExp) * 100);
+    const expColor = expDiff > 0 ? 'var(--red)' : 'var(--green)';
+    const expArrow = expDiff > 0 ? '↑' : expDiff < 0 ? '↓' : '→';
+
+    html += `<div class="detail-section"><h4>📊 Сравнение с обычным</h4>
+      <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:8px;">Среднее за ${totalTrends.monthsUsed} мес.</div>
+      <div class="detail-row"><div class="dl"><div class="dl-text">Обычный доход</div></div><div class="dr"><div class="dr-amount">${formatMoney(avgInc)}</div></div></div>
+      <div class="detail-row"><div class="dl"><div class="dl-text">Обычные расходы</div></div><div class="dr"><div class="dr-amount">${formatMoney(avgExp)}</div></div></div>
+      <div class="detail-row"><div class="dl"><div class="dl-text"><b>${expArrow} Отклонение расходов</b></div></div><div class="dr"><div class="dr-amount" style="color:${expColor};">${expDiff > 0 ? '+' : ''}${formatMoney(expDiff)} (${expDiffPct > 0 ? '+' : ''}${expDiffPct}%)</div></div></div>`;
+
+    // Progress bar: actual vs average
+    const barActual = Math.min(Math.round(expenses / Math.max(avgExp, expenses) * 100), 100);
+    const barAvg = Math.min(Math.round(avgExp / Math.max(avgExp, expenses) * 100), 100);
+    html += `<div style="margin-top:8px;">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <span style="font-size:0.75rem;width:60px;">Факт</span>
+        <div style="flex:1;height:8px;background:var(--border);border-radius:4px;overflow:hidden;"><div style="height:100%;width:${barActual}%;background:${expenses > avgExp ? 'var(--red)' : 'var(--green)'};border-radius:4px;transition:width 0.3s;"></div></div>
+        <span style="font-size:0.75rem;min-width:70px;text-align:right;">${formatMoney(expenses)}</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span style="font-size:0.75rem;width:60px;">Среднее</span>
+        <div style="flex:1;height:8px;background:var(--border);border-radius:4px;overflow:hidden;"><div style="height:100%;width:${barAvg}%;background:var(--accent);border-radius:4px;transition:width 0.3s;"></div></div>
+        <span style="font-size:0.75rem;min-width:70px;text-align:right;">${formatMoney(avgExp)}</span>
+      </div>
+    </div>`;
+
+    html += `</div>`;
+  }
+
   // Savings rate
   html += `<div class="detail-tip">
     <span class="tip-emoji">💎</span> <b>Норма сбережений:</b> ${savingsRate}%
@@ -2530,6 +3594,108 @@ function refreshCurrentView() {
 
 function closeModal(id) {
   document.getElementById(id).classList.remove('active');
+}
+
+// ============================================================
+//  WOW SCREEN (post-upload summary)
+// ============================================================
+function showWowScreen(newTx, uniqueCount, dupeCount) {
+  if (uniqueCount === 0) return;
+
+  // Determine period(s) from new transactions
+  const monthKeys = [...new Set(newTx.map(t => t.monthKey))].sort();
+  const periodStr = monthKeys.map(k => monthName(k)).join(', ');
+
+  // Calculate stats from new unique transactions only
+  const income = newTx.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+  const expenses = newTx.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+  const transfers = newTx.filter(t => t.type === 'transfer').reduce((s, t) => s + t.amount, 0);
+
+  // Top categories by expense amount
+  const catMap = {};
+  newTx.filter(t => t.type === 'expense').forEach(t => {
+    catMap[t.category] = (catMap[t.category] || 0) + t.amount;
+  });
+  const topCats = Object.entries(catMap)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
+
+  // Count "Прочее" items
+  const miscCount = newTx.filter(t => t.category === 'Прочее' && t.type === 'expense').length;
+
+  // Build HTML
+  let html = '<h3 style="margin-bottom:12px;text-align:center;">Выписка загружена!</h3>';
+
+  // Stats grid
+  html += '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">';
+
+  html += '<div style="background:var(--bg-secondary);border-radius:12px;padding:12px;text-align:center;">'
+    + '<div style="font-size:0.8rem;color:var(--text-muted);">Операций</div>'
+    + '<div style="font-size:1.3rem;font-weight:700;">' + uniqueCount + '</div>'
+    + (dupeCount > 0 ? '<div style="font-size:0.7rem;color:var(--text-muted);">+' + dupeCount + ' дубл. пропущено</div>' : '')
+    + '</div>';
+
+  html += '<div style="background:var(--bg-secondary);border-radius:12px;padding:12px;text-align:center;">'
+    + '<div style="font-size:0.8rem;color:var(--text-muted);">Период</div>'
+    + '<div style="font-size:1rem;font-weight:600;">' + periodStr + '</div>'
+    + '</div>';
+
+  if (income > 0) {
+    html += '<div style="background:var(--bg-secondary);border-radius:12px;padding:12px;text-align:center;">'
+      + '<div style="font-size:0.8rem;color:var(--text-muted);">Доходы</div>'
+      + '<div style="font-size:1.1rem;font-weight:700;color:var(--green);">+' + formatMoney(income) + '</div>'
+      + '</div>';
+  }
+
+  if (expenses > 0) {
+    html += '<div style="background:var(--bg-secondary);border-radius:12px;padding:12px;text-align:center;">'
+      + '<div style="font-size:0.8rem;color:var(--text-muted);">Расходы</div>'
+      + '<div style="font-size:1.1rem;font-weight:700;color:var(--red);">-' + formatMoney(expenses) + '</div>'
+      + '</div>';
+  }
+
+  if (transfers > 0) {
+    html += '<div style="background:var(--bg-secondary);border-radius:12px;padding:12px;text-align:center;">'
+      + '<div style="font-size:0.8rem;color:var(--text-muted);">Переводы</div>'
+      + '<div style="font-size:1.1rem;font-weight:600;color:var(--text-muted);">' + formatMoney(transfers) + '</div>'
+      + '</div>';
+  }
+
+  html += '</div>';
+
+  // Top categories
+  if (topCats.length > 0 && expenses > 0) {
+    html += '<div style="margin-bottom:12px;">';
+    html += '<div style="font-size:0.85rem;font-weight:600;margin-bottom:8px;">Топ расходов:</div>';
+    topCats.forEach(([cat, amount]) => {
+      const pct = Math.round(amount / expenses * 100);
+      const catIcon = (CATEGORIES[cat]) ? CATEGORIES[cat].emoji : '📦';
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">'
+        + '<span>' + catIcon + ' ' + cat + '</span>'
+        + '<span style="font-weight:600;">' + formatMoney(amount) + ' <span style="color:var(--text-muted);font-weight:400;">(' + pct + '%)</span></span>'
+        + '</div>';
+    });
+    html += '</div>';
+  }
+
+  // "Прочее" notice
+  if (miscCount > 0) {
+    html += '<div style="background:rgba(255,193,7,0.12);border-radius:10px;padding:10px 12px;font-size:0.85rem;">'
+      + '❓ <b>Нужно разобрать:</b> ' + miscCount + ' операц' + pluralize(miscCount, 'ия', 'ии', 'ий') + ' в «Прочее»'
+      + '</div>';
+  }
+
+  document.getElementById('wow-content').innerHTML = html;
+  document.getElementById('modal-wow').classList.add('active');
+}
+
+function pluralize(n, one, few, many) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 19) return many;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
 }
 
 // ============================================================
@@ -3999,6 +5165,165 @@ function renderProStatus() {
   }
   card.innerHTML = html;
   card.style.display = 'block';
+}
+
+// ============================================================
+//  MONTHLY STORIES (Spotify Wrapped format)
+// ============================================================
+function showMonthlyStories(monthKey) {
+  const mk = monthKey || currentMonth;
+  if (!mk) return;
+
+  const data = getMonthData(mk);
+  if (data.length === 0) { toast('Нет данных за этот месяц'); return; }
+
+  const income = data.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+  const expenses = data.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+  const expenseData = data.filter(t => t.type === 'expense');
+
+  // Category breakdown
+  const catTotals = {};
+  for (const t of expenseData) catTotals[t.category] = (catTotals[t.category] || 0) + t.amount;
+  const sortedCats = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
+  const top3 = sortedCats.slice(0, 3);
+
+  // Biggest single expense
+  const biggest = expenseData.length > 0 ? expenseData.reduce((max, t) => t.amount > max.amount ? t : max, expenseData[0]) : null;
+
+  // Comparison with prev month
+  const totalTrends = calculateTotalTrends(mk);
+  const saved = income - expenses;
+  const savingsRate = income > 0 ? Math.round((saved / income) * 100) : 0;
+
+  // Rank info
+  const rankInfo = getRankInfo(STATE.gamification.rank);
+
+  // Build slides
+  const slides = [];
+  const gradients = [
+    'linear-gradient(135deg, #6C5CE7, #A29BFE)',
+    'linear-gradient(135deg, #00B894, #55EFC4)',
+    'linear-gradient(135deg, #E17055, #FAB1A0)',
+    'linear-gradient(135deg, #0984E3, #74B9FF)',
+    'linear-gradient(135deg, #FDCB6E, #F39C12)',
+    'linear-gradient(135deg, #E84393, #FD79A8)'
+  ];
+
+  // Slide 1: Title
+  slides.push(`<div class="story-slide" style="background:${gradients[0]};">
+    <div style="font-size:3rem;">📊</div>
+    <div style="font-size:1.6rem;font-weight:800;margin:8px 0;">Ваш ${monthName(mk)}</div>
+    <div style="font-size:2.2rem;font-weight:800;">${formatMoney(expenses)}</div>
+    <div style="font-size:0.9rem;opacity:0.8;">расходов за месяц</div>
+    ${income > 0 ? `<div style="margin-top:12px;font-size:0.9rem;">Доходы: ${formatMoney(income)}</div>` : ''}
+  </div>`);
+
+  // Slide 2: Top 3 categories
+  if (top3.length > 0) {
+    let catHtml = top3.map(([cat, amt], i) => {
+      const info = CATEGORIES[cat] || { emoji: '❓' };
+      const pct = expenses > 0 ? Math.round((amt / expenses) * 100) : 0;
+      const medal = ['🥇','🥈','🥉'][i];
+      return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;${i < 2 ? 'border-bottom:1px solid rgba(255,255,255,0.2);' : ''}">
+        <div style="font-size:1.5rem;">${medal}</div>
+        <div style="flex:1;">
+          <div style="font-weight:700;">${info.emoji} ${info.displayName || cat}</div>
+          <div style="font-size:0.8rem;opacity:0.8;">${pct}% всех расходов</div>
+        </div>
+        <div style="font-weight:700;">${formatMoney(amt)}</div>
+      </div>`;
+    }).join('');
+    slides.push(`<div class="story-slide" style="background:${gradients[1]};">
+      <div style="font-size:1.2rem;font-weight:800;margin-bottom:12px;">🏆 ТОП-3 категории</div>
+      ${catHtml}
+    </div>`);
+  }
+
+  // Slide 3: Biggest expense
+  if (biggest) {
+    const cleanDesc = typeof cleanDescription === 'function' ? cleanDescription(biggest.description) : biggest.description;
+    slides.push(`<div class="story-slide" style="background:${gradients[2]};">
+      <div style="font-size:3rem;">💸</div>
+      <div style="font-size:1.1rem;font-weight:700;margin:8px 0;">Самая крупная трата</div>
+      <div style="font-size:1.8rem;font-weight:800;">${formatMoney(biggest.amount)}</div>
+      <div style="font-size:0.9rem;opacity:0.8;margin-top:4px;">${cleanDesc}</div>
+      <div style="font-size:0.8rem;opacity:0.6;margin-top:4px;">${new Date(biggest.date).toLocaleDateString('ru-RU', {day:'numeric',month:'long'})}</div>
+    </div>`);
+  }
+
+  // Slide 4: Comparison with average
+  if (totalTrends && totalTrends.avgExpense > 0) {
+    const diff = expenses - totalTrends.avgExpense;
+    const diffPct = Math.round((diff / totalTrends.avgExpense) * 100);
+    const betterOrWorse = diff <= 0 ? '✅ Меньше обычного!' : '📈 Больше обычного';
+    const diffText = diff <= 0 ? `На ${formatMoney(Math.abs(diff))} меньше` : `На ${formatMoney(diff)} больше`;
+    slides.push(`<div class="story-slide" style="background:${gradients[3]};">
+      <div style="font-size:1.1rem;font-weight:700;">Сравнение с обычным</div>
+      <div style="font-size:2.5rem;font-weight:800;margin:12px 0;">${diffPct > 0 ? '+' : ''}${diffPct}%</div>
+      <div style="font-size:1rem;">${betterOrWorse}</div>
+      <div style="font-size:0.85rem;opacity:0.8;margin-top:8px;">${diffText}<br>Среднее: ${formatMoney(totalTrends.avgExpense)}</div>
+    </div>`);
+  }
+
+  // Slide 5: Savings
+  slides.push(`<div class="story-slide" style="background:${gradients[4]};">
+    <div style="font-size:3rem;">${saved >= 0 ? '💰' : '⚠️'}</div>
+    <div style="font-size:1.1rem;font-weight:700;margin:8px 0;">${saved >= 0 ? 'Экономия' : 'Перерасход'}</div>
+    <div style="font-size:2rem;font-weight:800;">${formatMoney(Math.abs(saved))}</div>
+    ${income > 0 ? `<div style="font-size:0.9rem;opacity:0.8;margin-top:8px;">${savingsRate}% от дохода ${saved >= 0 ? 'отложено' : 'не хватило'}</div>` : ''}
+  </div>`);
+
+  // Slide 6: Rank
+  slides.push(`<div class="story-slide" style="background:${gradients[5]};">
+    <div style="font-size:3rem;">${rankInfo.icon}</div>
+    <div style="font-size:1.3rem;font-weight:800;margin:8px 0;">Ваш ранг: ${rankInfo.label}</div>
+    <div style="font-size:0.9rem;opacity:0.8;">Серия: ${STATE.gamification.streak.current} мес. подряд</div>
+    <div style="font-size:0.9rem;opacity:0.8;">Бейджей: ${STATE.gamification.badges.length} из ${BADGE_DEFS.length}</div>
+  </div>`);
+
+  // Render
+  let currentSlide = 0;
+  const totalSlides = slides.length;
+
+  function renderSlide() {
+    const dots = Array.from({length: totalSlides}, (_, i) =>
+      `<div style="width:${i === currentSlide ? '16px' : '6px'};height:4px;border-radius:2px;background:${i === currentSlide ? '#fff' : 'rgba(255,255,255,0.4)'};transition:all 0.3s;"></div>`
+    ).join('');
+
+    // Extract gradient from slide and apply to container
+    const slideHtml = slides[currentSlide];
+    const bgMatch = slideHtml.match(/background:(linear-gradient[^;]+);/);
+    const bg = bgMatch ? bgMatch[1] : gradients[currentSlide] || gradients[0];
+
+    document.getElementById('stories-content').innerHTML = `
+      <div style="position:relative;height:100%;min-height:500px;background:${bg};border-radius:20px;transition:background 0.4s;">
+        <div style="display:flex;gap:3px;padding:16px 20px;position:absolute;top:0;left:0;right:0;z-index:5;">${dots}</div>
+        <div style="height:100%;display:flex;align-items:center;justify-content:center;padding:48px 8px 48px;">
+          ${slideHtml.replace(/style="background:[^"]*"/, 'style="background:transparent;"')}
+        </div>
+        <div style="position:absolute;bottom:20px;left:0;right:0;text-align:center;font-size:0.8rem;color:rgba(255,255,255,0.5);">
+          ${currentSlide < totalSlides - 1 ? 'Нажмите →' : 'Нажмите, чтобы закрыть'}
+        </div>
+      </div>`;
+  }
+
+  // Open modal
+  document.getElementById('modal-stories').classList.add('active');
+  renderSlide();
+
+  // Navigation by clicking left/right halves
+  document.getElementById('stories-content').onclick = function(e) {
+    const rect = this.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    if (x > rect.width * 0.4) {
+      // Right side — next
+      if (currentSlide < totalSlides - 1) { currentSlide++; renderSlide(); }
+      else closeModal('modal-stories');
+    } else {
+      // Left side — prev
+      if (currentSlide > 0) { currentSlide--; renderSlide(); }
+    }
+  };
 }
 
 // ============================================================

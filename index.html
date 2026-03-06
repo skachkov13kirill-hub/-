@@ -83,6 +83,11 @@
     <span class="filter-chip" id="dash-exclude-btn" style="background:var(--yellow-bg);color:var(--text-primary);" onclick="openDashExcludeModal()">⚙️ Фильтр</span>
   </div>
 
+  <!-- Insight phrase -->
+  <div class="card insight-card" id="insight-card" style="display:none;">
+    <div id="insight-content" style="font-size:0.85rem;line-height:1.4;"></div>
+  </div>
+
   <!-- Income / Expense summary -->
   <div class="summary-row">
     <div class="summary-item" onclick="openIncomeDetail()">
@@ -114,6 +119,7 @@
       <div class="forecast-bar" id="forecast-bar"></div>
     </div>
     <div class="forecast-status" id="forecast-status"></div>
+    <div id="forecast-trend" style="margin-top:6px;font-size:0.78rem;"></div>
   </div>
 
   <!-- Where money goes -->
@@ -135,6 +141,8 @@
   <!-- Quick actions -->
   <div style="display:flex;gap:8px;margin-bottom:4px;">
     <button onclick="showScreen('calendar')" style="flex:1;padding:10px;border-radius:var(--radius-sm);background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);font-weight:600;font-size:0.8rem;cursor:pointer;">📈 Тренды</button>
+    <button onclick="showAchievements()" style="flex:1;padding:10px;border-radius:var(--radius-sm);background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);font-weight:600;font-size:0.8rem;cursor:pointer;">🏆 Ранг</button>
+    <button onclick="showMonthlyStories()" style="flex:1;padding:10px;border-radius:var(--radius-sm);background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);font-weight:600;font-size:0.8rem;cursor:pointer;">📖 Итоги</button>
     <button onclick="shareReport()" style="flex:1;padding:10px;border-radius:var(--radius-sm);background:var(--bg-card);border:1px solid var(--border);color:var(--text-primary);font-weight:600;font-size:0.8rem;cursor:pointer;">📤 Поделиться</button>
   </div>
 
@@ -516,14 +524,16 @@
   </div>
 </div>
 
-<!-- ============ MODAL: Category reassign (legacy, kept for compatibility) ============ -->
-<div class="modal-overlay" id="modal-recat" onclick="if(event.target===this)closeModal('modal-recat')" style="display:none;">
-  <div class="modal">
-    <button class="modal-close" onclick="closeModal('modal-recat')" aria-label="Закрыть">✕</button>
+<!-- ============ MODAL: Quick category picker (bottom-sheet) ============ -->
+<div class="modal-overlay" id="modal-quickcat" onclick="if(event.target===this)closeModal('modal-quickcat')">
+  <div class="modal modal-bottom">
     <div class="modal-handle"></div>
-    <h3 style="margin-bottom:12px;">Изменить категорию</h3>
-    <div id="recat-tx-info" style="margin-bottom:12px;"></div>
-    <div id="recat-options"></div>
+    <div id="quickcat-header" style="margin-bottom:10px;"></div>
+    <div id="quickcat-grid" class="quickcat-grid"></div>
+    <div id="quickcat-scope" style="display:none;margin-top:12px;"></div>
+    <div style="margin-top:8px;text-align:center;">
+      <button class="btn-link" onclick="quickcatOpenFull()" style="font-size:0.8rem;color:var(--text-muted);background:none;border:none;cursor:pointer;text-decoration:underline;">Полное редактирование →</button>
+    </div>
   </div>
 </div>
 
@@ -594,6 +604,35 @@
     <div class="btn-row" style="margin-top:12px;">
       <button class="btn-secondary" onclick="closeModal('modal-smart-patterns')">Потом</button>
       <button class="btn-primary" onclick="applySelectedPatterns()">Применить выбранные</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL: Monthly Stories (Wrapped) ============ -->
+<div class="modal-overlay" id="modal-stories" style="align-items:center;" onclick="if(event.target===this)closeModal('modal-stories')">
+  <div class="modal stories-modal" style="max-height:85vh;min-height:520px;overflow:hidden;padding:0;position:relative;border-radius:20px;width:92%;max-width:420px;">
+    <button class="modal-close" onclick="closeModal('modal-stories')" aria-label="Закрыть" style="position:absolute;top:12px;right:12px;z-index:10;background:rgba(0,0,0,0.3);color:#fff;">✕</button>
+    <div id="stories-content" style="height:100%;overflow:hidden;"></div>
+  </div>
+</div>
+
+<!-- ============ MODAL: Achievements (gamification) ============ -->
+<div class="modal-overlay" id="modal-achievements" onclick="if(event.target===this)closeModal('modal-achievements')">
+  <div class="modal" style="max-height:90vh;overflow-y:auto;">
+    <button class="modal-close" onclick="closeModal('modal-achievements')" aria-label="Закрыть">✕</button>
+    <div class="modal-handle"></div>
+    <div id="achievements-content"></div>
+  </div>
+</div>
+
+<!-- ============ MODAL: Wow Screen (post-upload summary) ============ -->
+<div class="modal-overlay" id="modal-wow" onclick="if(event.target===this)closeModal('modal-wow')">
+  <div class="modal" style="max-height:85vh;overflow-y:auto;">
+    <button class="modal-close" onclick="closeModal('modal-wow')" aria-label="Закрыть">✕</button>
+    <div class="modal-handle"></div>
+    <div id="wow-content"></div>
+    <div class="btn-row" style="margin-top:16px;">
+      <button class="btn-primary" style="width:100%;" onclick="closeModal('modal-wow')">Перейти к анализу</button>
     </div>
   </div>
 </div>
