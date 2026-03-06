@@ -2199,18 +2199,25 @@ function renderCategories(data, totalExpense, trends) {
       trendHtml = `<div style="font-size:0.65rem;color:${color};margin-top:1px;">${arrow} ${label} <span style="color:var(--text-muted);">(обычно ${formatMoney(tr.avg3m)})</span></div>`;
     }
 
-    // Color zones for progress bar: green(<70%), yellow(70-90%), red(>90%) of trend average
+    // Color zones for progress bar based on trend average
     let barColor = info.color;
     let remainText = '';
     if (tr && tr.avg3m > 0) {
       const trendPct = Math.round((amount / tr.avg3m) * 100);
-      if (trendPct < 70) barColor = 'var(--green)';
-      else if (trendPct < 90) barColor = 'var(--yellow)';
-      else if (trendPct < 110) barColor = info.color;
-      else barColor = 'var(--red)';
+      if (trendPct < 70) barColor = '#00B894';
+      else if (trendPct < 90) barColor = '#00B894';
+      else if (trendPct < 110) barColor = '#FDCB6E';
+      else barColor = '#E17055';
       const remaining = tr.avg3m - amount;
+      // Visual budget-style bar showing progress toward average
+      const fillW = Math.min(trendPct, 130);
+      const zoneColor = trendPct > 110 ? 'rgba(225,112,85,0.15)' : trendPct > 90 ? 'rgba(253,203,110,0.15)' : 'rgba(0,184,148,0.1)';
+      const statusEmoji = trendPct > 110 ? '🔴' : trendPct > 90 ? '🟡' : '🟢';
       if (remaining > 0) {
-        remainText = `<div style="font-size:0.6rem;color:var(--text-muted);margin-top:1px;">Осталось ${formatMoney(remaining)} из ${formatMoney(tr.avg3m)}</div>`;
+        remainText = `<div style="font-size:0.6rem;color:var(--text-muted);margin-top:2px;">Осталось ${formatMoney(remaining)} из ${formatMoney(tr.avg3m)}</div>`;
+      } else {
+        const over = amount - tr.avg3m;
+        remainText = `<div style="font-size:0.6rem;color:#E17055;margin-top:2px;">Перерасход ${formatMoney(over)} сверх ${formatMoney(tr.avg3m)}</div>`;
       }
     }
 
@@ -2489,34 +2496,47 @@ function renderStreak() {
     }
   }
 
-  var emoji = streak >= 6 ? '🔥' : streak >= 3 ? '⚡' : '📅';
-  var msg = streak >= 6 ? 'Невероятная серия!' : streak >= 3 ? 'Отличная серия!' : 'Хорошее начало!';
+  var emoji = streak >= 12 ? '💎' : streak >= 6 ? '🔥' : streak >= 3 ? '⚡' : '📅';
+  var msg = streak >= 12 ? 'Мастер финансов!' : streak >= 6 ? 'Невероятная серия!' : streak >= 3 ? 'Отличная серия!' : 'Хорошее начало!';
+  var best = STATE.gamification && STATE.gamification.streak ? STATE.gamification.streak.best : streak;
+  if (streak > best) best = streak;
 
-  // Build visual streak bar (last 6 months)
+  // Build visual streak bar (last 8 months)
   var shortNames = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
-  var streakBarHtml = '<div style="display:flex;gap:4px;margin-top:8px;">';
-  var showMonths = months.slice(-6);
+  var streakBarHtml = '<div style="display:flex;gap:3px;margin-top:8px;">';
+  var showMonths = months.slice(-8);
   for (var j = 0; j < showMonths.length; j++) {
     var mk = showMonths[j];
     var mm = parseInt(mk.split('-')[1]);
     var isInStreak = months.indexOf(mk) >= months.length - streak;
     var bg = isInStreak ? 'var(--accent)' : 'var(--border)';
+    var checkmark = isInStreak ? '✓' : '';
     streakBarHtml += '<div style="flex:1;text-align:center;">'
-      + '<div style="height:6px;border-radius:3px;background:' + bg + ';margin-bottom:2px;"></div>'
-      + '<div style="font-size:0.6rem;color:var(--text-muted);">' + shortNames[mm - 1] + '</div>'
+      + '<div style="height:22px;border-radius:6px;background:' + bg + ';display:flex;align-items:center;justify-content:center;font-size:0.55rem;color:#fff;font-weight:700;">' + checkmark + '</div>'
+      + '<div style="font-size:0.55rem;color:var(--text-muted);margin-top:2px;">' + shortNames[mm - 1] + '</div>'
       + '</div>';
   }
   streakBarHtml += '</div>';
 
-  // Next milestone
+  // Next milestone + motivational text
   var nextMilestone = streak < 3 ? 3 : streak < 6 ? 6 : streak < 12 ? 12 : 24;
-  var milestoneText = streak < nextMilestone ? '<div style="font-size:0.7rem;color:var(--accent);margin-top:4px;">До ' + nextMilestone + ' мес. осталось: ' + (nextMilestone - streak) + '</div>' : '';
+  var milestoneText = '';
+  if (streak < nextMilestone) {
+    var remaining = nextMilestone - streak;
+    var pctToNext = Math.round(streak / nextMilestone * 100);
+    milestoneText = '<div style="margin-top:6px;">'
+      + '<div style="display:flex;justify-content:space-between;font-size:0.65rem;color:var(--text-muted);margin-bottom:2px;"><span>До ' + nextMilestone + ' мес.</span><span>' + remaining + ' ост.</span></div>'
+      + '<div style="height:4px;background:var(--border);border-radius:2px;overflow:hidden;"><div style="height:100%;width:' + pctToNext + '%;background:var(--accent);border-radius:2px;"></div></div>'
+      + '</div>';
+  }
+  var bestText = best > streak ? '<div style="font-size:0.65rem;color:var(--text-muted);margin-top:2px;">Рекорд: ' + best + ' мес.</div>' : '';
 
   card.innerHTML = '<div style="display:flex;align-items:center;gap:12px;padding:4px 0;">'
-    + '<div style="font-size:2rem;">' + emoji + '</div>'
+    + '<div style="font-size:2.2rem;">' + emoji + '</div>'
     + '<div style="flex:1;">'
     + '<div style="font-weight:700;font-size:0.95rem;">Серия: ' + streak + ' мес. подряд</div>'
     + '<div style="font-size:0.8rem;color:var(--text-secondary);">' + msg + '</div>'
+    + bestText
     + milestoneText
     + '</div>'
     + '</div>'
