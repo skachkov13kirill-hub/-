@@ -2708,6 +2708,15 @@ function renderTransactions() {
   document.getElementById('tx-list').innerHTML = html;
 }
 
+function formatTxDate(tx) {
+  if (!tx.date) return '';
+  const [y, m, d] = tx.date.split('-');
+  const shortMonths = ['янв','фев','мар','апр','май','июн','июл','авг','сен','окт','ноя','дек'];
+  const mon = shortMonths[parseInt(m) - 1] || m;
+  const timeStr = tx.time ? ', ' + tx.time : '';
+  return parseInt(d) + ' ' + mon + timeStr;
+}
+
 function renderTxItem(tx) {
   const info = CATEGORIES[tx.category] || { emoji: '❓' };
   const colorClass = tx.type === 'income' ? 'amount-income' : (tx.type === 'transfer' ? '' : 'amount-expense');
@@ -2716,16 +2725,18 @@ function renderTxItem(tx) {
   const manualBadge = tx.manual ? '✏️ ' : '';
   const selfBadge = tx.category === 'Перевод себе' ? ' · 🔄' : '';
   const escapedId = tx.id.replace(/'/g, "\\'");
-  const dateLabel = txSortMode === 'amount' ? ('<div style="font-size:0.65rem;color:var(--text-muted);margin-top:1px;">' + tx.date + '</div>') : '';
+  const dateStr = formatTxDate(tx);
   return '<div class="tx-item" data-txid="' + tx.id.replace(/"/g, '&quot;') + '" onclick="openRecat(\'' + escapedId + '\')">'
     + '<div class="tx-emoji">' + info.emoji + '</div>'
     + '<div class="tx-info">'
     + '<div class="tx-desc">' + manualBadge + cleanDescription(tx.description) + '</div>'
     + '<div class="tx-cat">' + tx.category + ' · ' + (tx.bank || '') + commentBadge + selfBadge + '</div>'
     + (tx.comment ? '<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">💬 ' + tx.comment + '</div>' : '')
-    + dateLabel
     + '</div>'
-    + '<div class="tx-amount ' + colorClass + '">' + sign + formatMoney(tx.amount) + '</div>'
+    + '<div style="text-align:right;min-width:fit-content;">'
+    + '<div class="tx-amount ' + colorClass + '" style="margin-bottom:2px;">' + sign + formatMoney(tx.amount) + '</div>'
+    + '<div style="font-size:0.65rem;color:var(--text-muted);white-space:nowrap;">' + dateStr + '</div>'
+    + '</div>'
     + '</div>';
 }
 
