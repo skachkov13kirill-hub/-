@@ -1223,6 +1223,8 @@ async function handleFiles(files) {
     toast('Загружаю выписку...');
   }
 
+  try { // Global try-catch for entire file handling
+
   let allNewTx = [];
 
   for (let i = 0; i < files.length; i++) {
@@ -1300,14 +1302,25 @@ async function handleFiles(files) {
   }
 
   if (allNewTx.length > 0) {
-    // Merge, avoiding duplicates by id
-    const existingIds = new Set(STATE.transactions.map(t => t.id));
-    const unique = allNewTx.filter(t => !existingIds.has(t.id));
-    STATE.transactions = STATE.transactions.concat(unique);
-    STATE.transactions.sort((a, b) => b.date.localeCompare(a.date) || (b.time || '').localeCompare(a.time || ''));
-    saveState();
+    let unique = [];
+    let dupeCount = 0;
+    try {
+      // Merge, avoiding duplicates by id
+      const existingIds = new Set(STATE.transactions.map(t => t.id));
+      unique = allNewTx.filter(t => !existingIds.has(t.id));
+      STATE.transactions = STATE.transactions.concat(unique);
+      STATE.transactions.sort((a, b) => {
+        const da = a.date || ''; const db = b.date || '';
+        return db.localeCompare(da) || (b.time || '').localeCompare(a.time || '');
+      });
+      saveState();
+    } catch(mergeErr) {
+      console.error('[FinHelper] Merge/save error:', mergeErr);
+      // Still add transactions without sorting if sort fails
+      if (unique.length === 0) unique = allNewTx;
+    }
 
-    const dupeCount = allNewTx.length - unique.length;
+    dupeCount = allNewTx.length - unique.length;
     if (unique.length === 0 && dupeCount > 0) {
       updateProgress(100, `Все ${dupeCount} операций уже были загружены ранее`);
       toast('Дубликатов не добавлено — эта выписка уже загружена');
@@ -1324,15 +1337,21 @@ async function handleFiles(files) {
 
     // Auto-match transfers between own cards
     setTimeout(() => {
-      const matched = autoMatchTransfers();
-      applySmartPatterns();
-      showScreen('dashboard');
+      try {
+        autoMatchTransfers();
+      } catch(e) { console.error('[FinHelper] autoMatchTransfers error:', e); }
+      try {
+        applySmartPatterns();
+      } catch(e) { console.error('[FinHelper] applySmartPatterns error:', e); }
+      try {
+        showScreen('dashboard');
+      } catch(e) { console.error('[FinHelper] showScreen error:', e); }
       // Show Wow screen summary
-      setTimeout(() => showWowScreen(unique, unique.length, dupeCount), 400);
+      setTimeout(() => { try { showWowScreen(unique, unique.length, dupeCount); } catch(e) { console.error('[FinHelper] showWowScreen error:', e); } }, 400);
       // Show wizard if many "Прочее" items in new transactions
-      setTimeout(() => showWizardMisc(allNewTx), 2000);
+      setTimeout(() => { try { showWizardMisc(allNewTx); } catch(e) { console.error('[FinHelper] showWizardMisc error:', e); } }, 2000);
       // Check for smart pattern suggestions
-      setTimeout(() => showSmartPatternSuggestions(), 4000);
+      setTimeout(() => { try { showSmartPatternSuggestions(); } catch(e) { console.error('[FinHelper] showSmartPatternSuggestions error:', e); } }, 4000);
     }, 800);
   } else {
     if (isOnboarding) {
@@ -1340,6 +1359,23 @@ async function handleFiles(files) {
       document.getElementById('upload-progress').classList.remove('active');
     }
     toast('Не удалось найти операции в файле');
+  }
+
+  } catch(globalErr) {
+    // Global error handler — ensures app never hangs on upload
+    console.error('[FinHelper] CRITICAL handleFiles error:', globalErr);
+    updateProgress(100, 'Ошибка при обработке файла');
+    toast('Ошибка: ' + (globalErr.message || 'неизвестная'));
+    // Try to recover — show dashboard if we have data
+    setTimeout(() => {
+      try {
+        if (STATE.transactions.length > 0) showScreen('dashboard');
+        else {
+          document.querySelector('.upload-zone').style.display = 'flex';
+          document.getElementById('upload-progress').classList.remove('active');
+        }
+      } catch(e) { console.error('[FinHelper] Recovery failed:', e); }
+    }, 500);
   }
 }
 
@@ -1868,6 +1904,7 @@ function showAchievements() {
 //  DASHBOARD RENDER
 // ============================================================
 function renderDashboard() {
+  try {
   if (!currentMonth) {
     const months = getAvailableMonths();
     currentMonth = months[months.length - 1] || '2025-01';
@@ -1877,7 +1914,7 @@ function renderDashboard() {
   const data = applyDashFilter(allData);
 
   // Gamification: update ranks/badges before rendering rank badge
-  updateGamification();
+  try { updateGamification(); } catch(e) { console.error('[FinHelper] updateGamification error:', e); }
 
   // Rank badge next to month name
   const rankInfo = getRankInfo(STATE.gamification.rank);
@@ -1909,34 +1946,38 @@ function renderDashboard() {
   const totalTrends = calculateTotalTrends(currentMonth);
 
   // Salary forecast (always use full data for accurate forecast)
-  renderForecast(allData, income, expenses, totalTrends);
+  try { renderForecast(allData, income, expenses, totalTrends); } catch(e) { console.error('[FinHelper] renderForecast error:', e); }
 
   // Donut chart
-  renderDonut(data, expenses);
+  try { renderDonut(data, expenses); } catch(e) { console.error('[FinHelper] renderDonut error:', e); }
 
   // Categories list
-  renderCategories(data, expenses, trends);
+  try { renderCategories(data, expenses, trends); } catch(e) { console.error('[FinHelper] renderCategories error:', e); }
 
   // Insight phrases (smart comments)
-  renderInsight(data, income, expenses, trends, totalTrends);
+  try { renderInsight(data, income, expenses, trends, totalTrends); } catch(e) { console.error('[FinHelper] renderInsight error:', e); }
 
   // Shock fact
-  renderShock(data, income, expenses);
+  try { renderShock(data, income, expenses); } catch(e) { console.error('[FinHelper] renderShock error:', e); }
 
   // Month comparison
-  renderComparison(expenses, income);
+  try { renderComparison(expenses, income); } catch(e) { console.error('[FinHelper] renderComparison error:', e); }
 
   // Upload streak
-  renderStreak();
+  try { renderStreak(); } catch(e) { console.error('[FinHelper] renderStreak error:', e); }
 
   // Health score
-  renderHealth(income, expenses, data);
+  try { renderHealth(income, expenses, data); } catch(e) { console.error('[FinHelper] renderHealth error:', e); }
 
   // Goal progress card
-  renderGoalDashCard();
+  try { renderGoalDashCard(); } catch(e) { console.error('[FinHelper] renderGoalDashCard error:', e); }
 
   // Check for rank-up animation
-  checkRankUpAnimation();
+  try { checkRankUpAnimation(); } catch(e) { console.error('[FinHelper] checkRankUpAnimation error:', e); }
+
+  } catch(dashErr) {
+    console.error('[FinHelper] renderDashboard critical error:', dashErr);
+  }
 }
 
 function renderForecast(data, income, expenses, totalTrends) {
