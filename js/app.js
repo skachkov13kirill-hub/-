@@ -3681,46 +3681,35 @@ function openIncomeDetail() {
     return;
   }
 
-  // Group by source/description
-  const bySource = {};
-  for (const tx of incomeTxs) {
-    const key = tx.description.substring(0, 40) || 'Прочее';
-    if (!bySource[key]) bySource[key] = { amount: 0, count: 0, cat: tx.category };
-    bySource[key].amount += tx.amount;
-    bySource[key].count++;
-  }
-
-  // Sort by amount desc
-  const sorted = Object.entries(bySource).sort((a, b) => b[1].amount - a[1].amount);
+  // Sort by date desc
+  const sorted = [...incomeTxs].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   let html = `<div class="detail-section">
-    <h4>Источники дохода</h4>`;
+    <h4>Источники дохода · ${formatMoney(totalIncome)}</h4>`;
 
-  for (const [source, info] of sorted) {
-    const pct = totalIncome > 0 ? Math.round(info.amount / totalIncome * 100) : 0;
-    const emoji = (CATEGORIES[info.cat] || {}).emoji || '💰';
-    const escapedSource = source.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+  for (const tx of sorted) {
+    const emoji = (CATEGORIES[tx.category] || {}).emoji || '💰';
+    const desc = (tx.description || 'Прочее').substring(0, 50);
+    const dateStr = tx.date ? tx.date.split('-').reverse().join('.') : '';
+    const escapedId = tx.id.replace(/'/g, "\\'");
     html += `
       <div class="detail-row" style="flex-wrap:wrap;">
-        <div class="dl">
+        <div class="dl" style="flex:1;min-width:0;">
           <div class="dl-emoji">${emoji}</div>
-          <div>
-            <div class="dl-text">${source}</div>
-            <div class="dl-sub">${info.count} операций · ${info.cat}</div>
+          <div style="min-width:0;">
+            <div class="dl-text" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${desc}</div>
+            <div class="dl-sub">${dateStr} · ${tx.category}</div>
           </div>
         </div>
         <div class="dr" style="display:flex;align-items:center;gap:6px;">
-          <div>
-            <div class="dr-amount amount-income">+${formatMoney(info.amount)}</div>
-            <div class="dr-pct">${pct}%</div>
-          </div>
-          ${info.cat !== 'Зарплата' ? `<button onclick="reclassifyIncomeSource('${escapedSource}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:2px 6px;cursor:pointer;font-size:0.7rem;color:var(--text-muted);white-space:nowrap;" title="Это не доход">✕</button>` : ''}
+          <div class="dr-amount amount-income">+${formatMoney(tx.amount)}</div>
+          <button onclick="reclassifyIncomeTx('${escapedId}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:2px 6px;cursor:pointer;font-size:0.7rem;color:var(--text-muted);" title="Это не доход">✕</button>
         </div>
       </div>`;
   }
   html += `</div>
   <div style="margin-top:8px;padding:8px 12px;background:rgba(0,0,0,0.03);border-radius:8px;font-size:0.75rem;color:var(--text-muted);">
-    💡 Нажмите ✕ рядом с операцией, чтобы убрать её из доходов (→ Перевод себе)
+    💡 Нажмите ✕ чтобы убрать операцию из доходов → Перевод себе
   </div>`;
 
   // Compare to previous month
@@ -3750,24 +3739,15 @@ function openIncomeDetail() {
   showDetailModal('💰 Доходы · ' + monthName(currentMonth), html);
 }
 
-function reclassifyIncomeSource(sourcePrefix) {
-  const month = currentMonth;
-  let fixed = 0;
-  for (const tx of STATE.transactions) {
-    if (tx.type !== 'income') continue;
-    if (month && tx.monthKey !== month) continue;
-    if ((tx.description || '').substring(0, 40) === sourcePrefix) {
-      tx.type = 'transfer';
-      tx.category = 'Перевод себе';
-      fixed++;
-    }
-  }
-  if (fixed > 0) {
-    saveState();
-    toast(`${fixed} операций → Перевод себе`);
-    closeDetailModal();
-    renderDashboard();
-  }
+function reclassifyIncomeTx(txId) {
+  const tx = STATE.transactions.find(t => t.id === txId);
+  if (!tx) return;
+  tx.type = 'transfer';
+  tx.category = 'Перевод себе';
+  saveState();
+  toast('→ Перевод себе');
+  closeDetailModal();
+  renderDashboard();
 }
 
 function openExpenseDetail() {
