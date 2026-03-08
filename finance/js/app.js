@@ -780,6 +780,19 @@ function loadState() {
       if (fixed > 0) console.log(`[FinHelper] Migration v11: re-categorized ${fixed} transactions from Прочее`);
     }
 
+    // Migration v12: fix type for Бизнес category (salary payments to employees were marked as transfer by v10)
+    if (!s._migrationBizTypeV12) {
+      let fixed = 0;
+      for (const tx of s.transactions) {
+        if (tx.category === 'Бизнес' && tx.type === 'transfer') {
+          tx.type = 'expense';
+          fixed++;
+        }
+      }
+      s._migrationBizTypeV12 = true;
+      if (fixed > 0) console.log(`[FinHelper] Migration v12: fixed ${fixed} Бизнес transactions from transfer to expense`);
+    }
+
     return s;
   }
   catch(e) { console.error('[FinHelper] loadState CRASHED:', e.message, e.stack); return defaultState(); }
