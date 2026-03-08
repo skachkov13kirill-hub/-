@@ -146,6 +146,7 @@ function defaultState() {
   return {
     transactions: [],
     customRules: {},  // merchant -> category
+    incomeRules: [],  // keywords that mark incoming transfers as salary/income
     settings: { salaryDate: 25, theme: 'light', familyMode: false },
     files: [], // loaded file names
     trash: []  // soft-deleted transactions
@@ -156,6 +157,7 @@ function loadState() {
     const s = JSON.parse(localStorage.getItem(APP_KEY)) || defaultState();
     // Migration: ensure trash array exists
     if (!s.trash) s.trash = [];
+    if (!s.incomeRules) s.incomeRules = [];
     if (!s.smartPatterns) s.smartPatterns = [];
     if (!s.budgets) s.budgets = {};
     if (!s.goals) s.goals = [];
@@ -354,6 +356,44 @@ function loadState() {
       if (recat > 0) console.log(`[FinHelper] Migration v7: re-categorized ${recat} transactions from Прочее`);
     }
 
+    // Migration v8: apply incomeRules to reclassify incoming transfers as 'Зарплата' (FIX-8)
+    if (!s._migrationSalaryV8 && s.incomeRules && s.incomeRules.length > 0) {
+      let fixed = 0;
+      for (const tx of s.transactions) {
+        if (tx._userEdited) continue;
+        if (tx.type === 'expense') continue;
+        const upper = (tx.description || '').toUpperCase();
+        const isOutgoing = upper.includes('ПЕРЕВОД ДЛЯ') || upper.includes('ПЕРЕВОД НА ');
+        if (isOutgoing) continue;
+        for (const rule of s.incomeRules) {
+          if (upper.includes(rule.toUpperCase()) && tx.category !== 'Зарплата') {
+            tx.category = 'Зарплата';
+            tx.type = 'income';
+            fixed++;
+            break;
+          }
+        }
+      }
+      s._migrationSalaryV8 = true;
+      if (fixed > 0) console.log(`[FinHelper] Migration v8: reclassified ${fixed} transfers as Зарплата`);
+    }
+
+    // Migration v9: ATM income → transfer (FIX-9)
+    if (!s._migrationAtmV9) {
+      let fixed = 0;
+      for (const tx of s.transactions) {
+        if (tx.type !== 'income') continue;
+        const upper = (tx.description || '').toUpperCase();
+        if (upper.includes('ATM ') || upper.includes('ATM_') || upper.includes('БАНКОМАТ') || upper.includes('CASH WITHDRAWAL') || upper.includes('СНЯТИЕ НАЛИЧНЫХ')) {
+          tx.type = 'transfer';
+          tx.category = 'Перевод себе';
+          fixed++;
+        }
+      }
+      s._migrationAtmV9 = true;
+      if (fixed > 0) console.log(`[FinHelper] Migration v9: reclassified ${fixed} ATM income as transfers`);
+    }
+
     return s;
   }
   catch(e) { return defaultState(); }
@@ -442,6 +482,7 @@ const CATEGORIES = {
   'Долг возврат': { emoji: '💰', color: '#00B894' },
   'Наличные расход': { emoji: '💵', color: '#E17055' },
   'Наличные доход': { emoji: '💵', color: '#00B894' },
+  'Зарплата': { emoji: '💼', color: '#00B894' },
   'Перевод себе': { emoji: '🔄', color: '#74B9FF' },
   'Дом': { emoji: '🏡', color: '#636E72' },
   'Животные': { emoji: '🐾', color: '#FAB1A0' },
@@ -885,6 +926,20 @@ function cleanDescription(desc) {
 function classifyTransferType(desc, bankCat, isIncome) {
   const upper = (desc || '').toUpperCase();
   const bankUpper = (bankCat || '').toUpperCase();
+
+  // FIX-9: ATM operations are never income — they are cash withdrawals or deposits (self-transfer)
+  if (upper.includes('ATM ') || upper.includes('ATM_') || upper.includes('БАНКОМАТ') || upper.includes('CASH WITHDRAWAL') || upper.includes('СНЯТИЕ НАЛИЧНЫХ')) {
+    return { type: isIncome ? 'transfer' : 'expense', category: isIncome ? 'Перевод себе' : 'Наличные расход' };
+  }
+
+  // FIX-8: User-defined income rules (salary, etc.)
+  if (isIncome && STATE.incomeRules && STATE.incomeRules.length > 0) {
+    for (const rule of STATE.incomeRules) {
+      if (upper.includes(rule.toUpperCase())) {
+        return { type: 'income', category: 'Зарплата' };
+      }
+    }
+  }
 
   // Self-transfer patterns (between own accounts)
   const selfPatterns = [
@@ -3618,8 +3673,7 @@ function getDebts() {
 // ============================================================
 function openIncomeDetail() {
   const allData = getMonthData(currentMonth);
-  const data = applyDashFilter(allData);
-  const incomeTxs = data.filter(t => t.type === 'income');
+  const incomeTxs = allData.filter(t => t.type === 'income');
   const totalIncome = incomeTxs.reduce((s, t) => s + t.amount, 0);
 
   if (incomeTxs.length === 0) {
@@ -3645,22 +3699,29 @@ function openIncomeDetail() {
   for (const [source, info] of sorted) {
     const pct = totalIncome > 0 ? Math.round(info.amount / totalIncome * 100) : 0;
     const emoji = (CATEGORIES[info.cat] || {}).emoji || '💰';
+    const escapedSource = source.replace(/'/g, "\\'").replace(/"/g, '&quot;');
     html += `
-      <div class="detail-row">
+      <div class="detail-row" style="flex-wrap:wrap;">
         <div class="dl">
           <div class="dl-emoji">${emoji}</div>
           <div>
             <div class="dl-text">${source}</div>
-            <div class="dl-sub">${info.count} операций</div>
+            <div class="dl-sub">${info.count} операций · ${info.cat}</div>
           </div>
         </div>
-        <div class="dr">
-          <div class="dr-amount amount-income">+${formatMoney(info.amount)}</div>
-          <div class="dr-pct">${pct}%</div>
+        <div class="dr" style="display:flex;align-items:center;gap:6px;">
+          <div>
+            <div class="dr-amount amount-income">+${formatMoney(info.amount)}</div>
+            <div class="dr-pct">${pct}%</div>
+          </div>
+          ${info.cat !== 'Зарплата' ? `<button onclick="reclassifyIncomeSource('${escapedSource}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:2px 6px;cursor:pointer;font-size:0.7rem;color:var(--text-muted);white-space:nowrap;" title="Это не доход">✕</button>` : ''}
         </div>
       </div>`;
   }
-  html += `</div>`;
+  html += `</div>
+  <div style="margin-top:8px;padding:8px 12px;background:rgba(0,0,0,0.03);border-radius:8px;font-size:0.75rem;color:var(--text-muted);">
+    💡 Нажмите ✕ рядом с операцией, чтобы убрать её из доходов (→ Перевод себе)
+  </div>`;
 
   // Compare to previous month
   const prevMonth = getPrevMonth(currentMonth);
@@ -3687,6 +3748,26 @@ function openIncomeDetail() {
   }
 
   showDetailModal('💰 Доходы · ' + monthName(currentMonth), html);
+}
+
+function reclassifyIncomeSource(sourcePrefix) {
+  const month = currentMonth;
+  let fixed = 0;
+  for (const tx of STATE.transactions) {
+    if (tx.type !== 'income') continue;
+    if (month && tx.monthKey !== month) continue;
+    if ((tx.description || '').substring(0, 40) === sourcePrefix) {
+      tx.type = 'transfer';
+      tx.category = 'Перевод себе';
+      fixed++;
+    }
+  }
+  if (fixed > 0) {
+    saveState();
+    toast(`${fixed} операций → Перевод себе`);
+    closeDetailModal();
+    renderDashboard();
+  }
 }
 
 function openExpenseDetail() {
@@ -4339,6 +4420,75 @@ function renderSettings() {
     ? STATE.files.map(f => `<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:0.9rem;">📄 ${f}</div>`).join('')
     : '<div class="empty-state"><p>Нет загруженных файлов</p></div>';
   document.getElementById('loaded-files').innerHTML = filesHtml;
+  renderIncomeRules();
+}
+
+function renderIncomeRules() {
+  const container = document.getElementById('income-rules-list');
+  if (!container) return;
+  const rules = STATE.incomeRules || [];
+  if (rules.length === 0) {
+    container.innerHTML = '<div style="padding:8px 0;font-size:0.85rem;color:var(--text-muted);">Нет правил. Входящие переводы считаются переводами, а не доходом.</div>';
+    return;
+  }
+  container.innerHTML = rules.map((r, i) => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+      <span style="font-size:0.9rem;">💼 ${r}</span>
+      <button onclick="removeIncomeRule(${i})" style="background:none;border:none;cursor:pointer;font-size:1rem;color:var(--text-muted);">✕</button>
+    </div>`).join('');
+}
+
+function addIncomeRule() {
+  const input = document.getElementById('income-rule-input');
+  const val = (input.value || '').trim();
+  if (!val) return;
+  if (!STATE.incomeRules) STATE.incomeRules = [];
+  if (STATE.incomeRules.some(r => r.toUpperCase() === val.toUpperCase())) {
+    toast('Такое правило уже есть');
+    return;
+  }
+  STATE.incomeRules.push(val);
+  input.value = '';
+  // Re-classify matching incoming transactions
+  let fixed = 0;
+  const valUp = val.toUpperCase();
+  for (const tx of STATE.transactions) {
+    if (tx._userEdited) continue;
+    if (tx.type === 'expense') continue;
+    const upper = (tx.description || '').toUpperCase();
+    if (!upper.includes(valUp)) continue;
+    // Only incoming: "ПЕРЕВОД ОТ" or non-"ПЕРЕВОД ДЛЯ" transfers
+    const isOutgoing = upper.includes('ПЕРЕВОД ДЛЯ') || upper.includes('ПЕРЕВОД НА ');
+    if (isOutgoing) continue;
+    if (tx.category !== 'Зарплата') {
+      tx.category = 'Зарплата';
+      tx.type = 'income';
+      fixed++;
+    }
+  }
+  saveState();
+  renderIncomeRules();
+  if (fixed > 0) toast(`${fixed} операций → Зарплата`);
+  else toast('Правило добавлено');
+}
+
+function removeIncomeRule(idx) {
+  const removed = STATE.incomeRules.splice(idx, 1)[0];
+  // Revert matching transactions back to transfer
+  if (removed) {
+    for (const tx of STATE.transactions) {
+      if (tx._userEdited) continue;
+      if (tx.category !== 'Зарплата') continue;
+      const upper = (tx.description || '').toUpperCase();
+      if (upper.includes(removed.toUpperCase())) {
+        tx.type = 'transfer';
+        tx.category = 'Переводы';
+      }
+    }
+  }
+  saveState();
+  renderIncomeRules();
+  toast('Правило удалено');
 }
 
 function renderDebtsSection() {

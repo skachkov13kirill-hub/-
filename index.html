@@ -261,6 +261,16 @@
   </div>
 
   <div class="card">
+    <div class="card-title">💼 Источники дохода</div>
+    <div class="setting-desc" style="margin-bottom:8px;">Укажите ключевые слова из описания переводов, которые являются вашей зарплатой или доходом (например, название ИП или работодателя)</div>
+    <div id="income-rules-list"></div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <input type="text" id="income-rule-input" placeholder="Например: ИП Иванов" style="flex:1;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:var(--card-bg);color:var(--text);font-size:0.9rem;">
+      <button onclick="addIncomeRule()" style="padding:8px 16px;border-radius:8px;background:var(--accent);color:white;border:none;font-weight:600;cursor:pointer;white-space:nowrap;">Добавить</button>
+    </div>
+  </div>
+
+  <div class="card">
     <div class="card-title">📂 Загруженные выписки</div>
     <div id="loaded-files"></div>
   </div>
