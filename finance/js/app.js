@@ -16,7 +16,339 @@ function txHash(bank, date, time, amount, desc, authCode) {
   }
   return Math.abs(hash).toString(36);
 }
-let STATE = loadState();
+const MERCHANT_RULES = [
+  // --- Продукты ---
+  { patterns: ['PYATEROCHKA','ПЯТЕРОЧКА','ПЯТЁРОЧКА','5KA','PYATYOROCHKA'], cat: 'Продукты' },
+  { patterns: ['MAGNIT','МАГНИТ'], cat: 'Продукты' },
+  { patterns: ['PEREKRESTOK','ПЕРЕКРЁСТОК','ПЕРЕКРЕСТОК','PEREKRYOSTOK'], cat: 'Продукты' },
+  { patterns: ['LENTA','ЛЕНТА'], cat: 'Продукты' },
+  { patterns: ['VKUSVILL','ВКУСВИЛЛ','ВКУС ВИЛЛ'], cat: 'Продукты' },
+  { patterns: ['DIKSI','ДИКСИ'], cat: 'Продукты' },
+  { patterns: ['AUCHAN','АШАН'], cat: 'Продукты' },
+  { patterns: ['METRO CASH','МЕТРО КЭШ'], cat: 'Продукты' },
+  { patterns: ['SAMOKAT','САМОКАТ'], cat: 'Продукты' },
+  { patterns: ['AZBUKA','АЗБУКА ВКУСА'], cat: 'Продукты' },
+  { patterns: ['KRASNOE','КРАСНОЕ И БЕЛОЕ','КРАСНОЕ&БЕЛОЕ','KRASNOEIBELOE'], cat: 'Продукты' },
+  { patterns: ['BRISTOL','БРИСТОЛЬ'], cat: 'Продукты' },
+  { patterns: ['FIXPRICE','FIX PRICE','ФИКС ПРАЙС','ФИКСПРАЙС'], cat: 'Продукты' },
+  { patterns: ['GLOBUS','ГЛОБУС'], cat: 'Продукты' },
+  { patterns: ['SPAR','СПАР'], cat: 'Продукты' },
+  { patterns: ['ВЕРНЫЙ','VERNIY','VERNY'], cat: 'Продукты' },
+  { patterns: ['BILLA','БИЛЛА'], cat: 'Продукты' },
+  { patterns: ['PRISMA','ПРИЗМА'], cat: 'Продукты' },
+  { patterns: ['OKEY','О\'КЕЙ','ОКЕЙ'], cat: 'Продукты' },
+  { patterns: ['ТАБАКО','TABAKO'], cat: 'Продукты' },
+  { patterns: ['МЯСН','MYASN'], cat: 'Продукты' },
+  { patterns: ['BAKERY','ПЕКАРНЯ','ХЛЕБ'], cat: 'Продукты' },
+  { patterns: ['LAVKA','ЛАВКА','YANDEX*LAVKA','ЯНДЕКС*ЛАВКА','YANDEX*5411*LAVKA'], cat: 'Продукты' },
+  { patterns: ['SBERMARKET','СБЕРМАРКЕТ'], cat: 'Продукты' },
+  { patterns: ['VPROK','ВПРОК'], cat: 'Продукты' },
+
+  // --- Еда вне дома ---
+  { patterns: ['YANDEX EDA','ЯНДЕКС ЕДА','YANDEX*EDA'], cat: 'Еда вне дома' },
+  { patterns: ['DELIVERY','ДЕЛИВЕРИ'], cat: 'Еда вне дома' },
+  { patterns: ['MCDONALD','МАКДОНАЛД','ВКУСНО И ТОЧКА','VKUSNO I TOCHKA'], cat: 'Еда вне дома' },
+  { patterns: ['KFC','КФС'], cat: 'Еда вне дома' },
+  { patterns: ['BURGER KING','БУРГЕР КИНГ'], cat: 'Еда вне дома' },
+  { patterns: ['DODO','ДОДО'], cat: 'Еда вне дома' },
+  { patterns: ['SUSHI','СУШИ'], cat: 'Еда вне дома' },
+  { patterns: ['STARBUCKS','СТАРБАКС'], cat: 'Еда вне дома' },
+  { patterns: ['ШОКОЛАДНИЦА','SHOKOLADNICA'], cat: 'Еда вне дома' },
+  { patterns: ['COFFEE','КОФЕ','COFIX','КОФИКС'], cat: 'Еда вне дома' },
+  { patterns: ['ПИЦЦА','PIZZA','ПИЦЦЕРИЯ'], cat: 'Еда вне дома' },
+  { patterns: ['ШАВЕРМА','SHAVERMA','ШАУРМА','SHAWARMA','ДЖУДОС','JUDOS'], cat: 'Еда вне дома' },
+  { patterns: ['РЕСТОРАН','RESTORAN','RESTAURANT'], cat: 'Еда вне дома' },
+  { patterns: ['КАФЕ','CAFE','СТОЛОВАЯ'], cat: 'Еда вне дома' },
+  { patterns: ['BAR ','БАР ','ПАСТА','PASTA'], cat: 'Еда вне дома' },
+  { patterns: ['ТЕРЕМОК','TEREMOK'], cat: 'Еда вне дома' },
+  { patterns: ['SUBWAY','САБВЕЙ'], cat: 'Еда вне дома' },
+  { patterns: ['FUDTRAK','ФУДТРАК'], cat: 'Еда вне дома' },
+
+  // --- Транспорт ---
+  { patterns: ['YANDEX TAXI','ЯНДЕКС ТАКСИ','YANDEX*TAXI','YANDEX GO'], cat: 'Транспорт' },
+  { patterns: ['UBER','УБЕР'], cat: 'Транспорт' },
+  { patterns: ['CITIMOBIL','СИТИМОБИЛ'], cat: 'Транспорт' },
+  { patterns: ['YANDEX DRIVE','ЯНДЕКС ДРАЙВ','DELIMOBIL','ДЕЛИМОБИЛЬ'], cat: 'Транспорт' },
+  { patterns: ['RZD','РЖД','RZHDRU'], cat: 'Транспорт' },
+  { patterns: ['AEROFLOT','АЭРОФЛОТ','S7','ПОБЕДА','POBEDA'], cat: 'Транспорт' },
+  { patterns: ['METRO','МЕТРО','МЕТРОПОЛИТЕН','TROIKA','ТРОЙКА'], cat: 'Транспорт' },
+  { patterns: ['PARKING','ПАРКОВКА'], cat: 'Транспорт' },
+
+  // --- Автомобиль ---
+  { patterns: ['LUKOIL','ЛУКОЙЛ'], cat: 'Автомобиль' },
+  { patterns: ['GAZPROM','ГАЗПРОМ'], cat: 'Автомобиль' },
+  { patterns: ['ROSNEFT','РОСНЕФТЬ'], cat: 'Автомобиль' },
+  { patterns: ['TATNEFT','ТАТНЕФТЬ'], cat: 'Автомобиль' },
+  { patterns: ['SHELL','ШЕЛЛ'], cat: 'Автомобиль' },
+  { patterns: ['AZS','АЗС','БЕНЗИН','BENZIN'], cat: 'Автомобиль' },
+  { patterns: ['АВТОМОЙКА','AVTOMOYKA','МОЙКА','MOYKA'], cat: 'Автомобиль' },
+  { patterns: ['TROFIMOV','ТРОФИМОВ'], cat: 'Автомобиль' }, // из выписки — шиномонтаж
+  { patterns: ['11180 KAD','TOLL','ПЛАТНАЯ ДОРОГА','АВТОДОР','AVTODOR','NOTHERN CAPITAL'], cat: 'Автомобиль' },
+
+  // --- Подписки и связь ---
+  { patterns: ['MTS','МТС','PAY.MTS'], cat: 'Подписки и связь' },
+  { patterns: ['BEELINE','БИЛАЙН'], cat: 'Подписки и связь' },
+  { patterns: ['MEGAFON','МЕГАФОН'], cat: 'Подписки и связь' },
+  { patterns: ['TELE2','ТЕЛЕ2'], cat: 'Подписки и связь' },
+  { patterns: ['ROSTELEKOM','РОСТЕЛЕКОМ'], cat: 'Подписки и связь' },
+  { patterns: ['NETFLIX'], cat: 'Подписки и связь' },
+  { patterns: ['KINOPOISK','КИНОПОИСК'], cat: 'Подписки и связь' },
+  { patterns: ['IVI','ИВИ'], cat: 'Подписки и связь' },
+  { patterns: ['OKKO','ОККО'], cat: 'Подписки и связь' },
+  { patterns: ['YANDEX PLUS','ЯНДЕКС ПЛЮС','YA.PLUS'], cat: 'Подписки и связь' },
+  { patterns: ['SPOTIFY'], cat: 'Подписки и связь' },
+  { patterns: ['YOUTUBE PREMIUM','YOUTUBE PREM'], cat: 'Подписки и связь' },
+  { patterns: ['APPLE.COM','APPLE STORE','ITUNES'], cat: 'Подписки и связь' },
+  { patterns: ['GOOGLE*','GOOGLE PLAY','GOOGLEPLAY'], cat: 'Подписки и связь' },
+  { patterns: ['T-MOBILE','T-BUNDLE','TMMB.T-MOBILE'], cat: 'Подписки и связь' },
+  { patterns: ['SMOTRESHKA','СМОТРЁШКА'], cat: 'Подписки и связь' },
+  { patterns: ['DEDVPN','VPN'], cat: 'Подписки и связь' },
+  { patterns: ['УЮТ ТЕЛЕКОМ','UYT TELEKOM'], cat: 'Подписки и связь' },
+
+  // --- Маркетплейсы ---
+  { patterns: ['OZON','ОЗОН'], cat: 'Маркетплейсы' },
+  { patterns: ['WILDBERRIES','ВАЙЛДБЕРРИЗ','WB'], cat: 'Маркетплейсы' },
+  { patterns: ['YANDEX MARKET','ЯНДЕКС МАРКЕТ','YA.MARKET'], cat: 'Маркетплейсы' },
+  { patterns: ['ALIEXPRESS','АЛИЭКСПРЕСС','ALI'], cat: 'Маркетплейсы' },
+  { patterns: ['LAMODA','ЛАМОДА'], cat: 'Маркетплейсы' },
+  { patterns: ['SBERMEGAMARKET','СБЕРМЕГАМАРКЕТ','MEGAMARKET'], cat: 'Маркетплейсы' },
+  { patterns: ['AVITO','АВИТО','TBANK-AVITO'], cat: 'Маркетплейсы' },
+
+  // --- Здоровье ---
+  { patterns: ['APTEKA','АПТЕКА','PHARMACY','ФАРМАЦИЯ'], cat: 'Здоровье' },
+  { patterns: ['GORZDRAV','ГОРЗДРАВ'], cat: 'Здоровье' },
+  { patterns: ['RIGLA','РИГЛА'], cat: 'Здоровье' },
+  { patterns: ['STOLICHKI','СТОЛИЧКИ'], cat: 'Здоровье' },
+  { patterns: ['36.6','366'], cat: 'Здоровье' },
+  { patterns: ['CLINIC','КЛИНИКА','DENTAL','СТОМАТОЛ','МЕДИЦИН','MEDIC'], cat: 'Здоровье' },
+  { patterns: ['INVITRO','ИНВИТРО','HELIX','ХЕЛИКС'], cat: 'Здоровье' },
+
+  // --- Красота ---
+  { patterns: ['ATRIBEAUTE','BEAUTY','КРАСОТ','САЛОН','БАРБЕР','BARBER'], cat: 'Красота' },
+  { patterns: ['ПАРИКМАХ','HAIRDRESS','НОГТ','NAIL','МАНИКЮР'], cat: 'Красота' },
+  { patterns: ['COSMETIC','КОСМЕТИК','ЗОЛОТОЕ ЯБЛОКО','LUSH','РИВА','RIVE'], cat: 'Красота' },
+
+  // --- Одежда ---
+  { patterns: ['ZARA','ЗАРА'], cat: 'Одежда' },
+  { patterns: ['H&M','H AND M','HM '], cat: 'Одежда' },
+  { patterns: ['UNIQLO','ЮНИКЛО'], cat: 'Одежда' },
+  { patterns: ['GLORIA','ГЛОРИЯ'], cat: 'Одежда' },
+  { patterns: ['SPORTMASTER','СПОРТМАСТЕР'], cat: 'Одежда' },
+  { patterns: ['DECATHLON','ДЕКАТЛОН'], cat: 'Одежда' },
+  { patterns: ['RESERVED','BERSHKA','PULL&BEAR','STRADIVARIUS'], cat: 'Одежда' },
+  { patterns: ['ADIDAS','NIKE','PUMA','REEBOK'], cat: 'Одежда' },
+
+  // --- Жильё ---
+  { patterns: ['IPOTEKA','ИПОТЕКА','MORTGAGE'], cat: 'Жильё' },
+  { patterns: ['ARENDA','АРЕНДА','RENT'], cat: 'Жильё' },
+
+  // --- Коммуналка ---
+  { patterns: ['GIS ZKH','ГИС ЖКХ','ЖКХ','KOMMUNAL','КОММУНАЛ','EPR_GIS'], cat: 'Коммуналка' },
+  { patterns: ['ЭЛЕКТРИЧЕСТВО','ЭЛЕКТРОЭНЕРГ','TGK','ТГК','МОСЭНЕРГ','ЭНЕРГО'], cat: 'Коммуналка' },
+  { patterns: ['ВОДОКАНАЛ','ВОДОСН'], cat: 'Коммуналка' },
+
+  // --- Развлечения ---
+  { patterns: ['CINEMA','КИНО','КИНОТЕАТР','КАРО','KARO','СИНЕМА'], cat: 'Развлечения' },
+  { patterns: ['GAME','GAMING','STEAM','PLAYSTATION','XBOX'], cat: 'Развлечения' },
+  { patterns: ['CONCERT','КОНЦЕРТ','ТЕАТР','THEATER','МУЗЕЙ','MUSEUM'], cat: 'Развлечения' },
+  { patterns: ['AIJORA'], cat: 'Развлечения' },
+  { patterns: ['LOGICLIKE'], cat: 'Дети' },
+
+  // --- Дети ---
+  { patterns: ['ДЕТСКИЙ','DETSKI','KIDS','MOTHERCARE'], cat: 'Дети' },
+  { patterns: ['ДОЧКИ-СЫНОЧКИ','КОРАБЛИК','KORABLIK'], cat: 'Дети' },
+
+  // --- Образование ---
+  { patterns: ['COURSE','КУРС','SKILLBOX','SKILLFACTORY','GEEKBRAINS','НЕТОЛОГИЯ'], cat: 'Образование' },
+
+  // --- Дом ---
+  { patterns: ['LEROY','ЛЕРУА','ЛЕМАНА','LEMANAPRO'], cat: 'Дом' },
+  { patterns: ['IKEA','ИКЕА','HOFF','ХОФФ'], cat: 'Дом' },
+  { patterns: ['OBI','ОБИ'], cat: 'Дом' },
+  { patterns: ['ASKONA','АСКОНА','LAZURIT','ЛАЗУРИТ'], cat: 'Дом' },
+  { patterns: ['PETROVICH','ПЕТРОВИЧ','СТРОЙМАТЕРИАЛ'], cat: 'Дом' },
+  { patterns: ['CASTORAMA','КАСТОРАМА','MAXIDOM','МАКСИДОМ'], cat: 'Дом' },
+  { patterns: ['SPB_NEBO','TRC NEBO','ТРЦ НЕБО','NEBO'], cat: 'Дом' },
+  { patterns: ['AFONYA','АФОНЯ'], cat: 'Дом' },
+  { patterns: ['МЕБЕЛЬ','MEBELSHIK','FURNITURE','МИРОНИКА'], cat: 'Дом' },
+  { patterns: ['УБОРКА','CLEANING','КЛИНИН','ХИМЧИСТ','ПРАЧЕЧН','LAUNDRY'], cat: 'Дом' },
+
+  // --- Животные ---
+  { patterns: ['ЧЕТЫРЕ ЛАПЫ','4LAPY','PETSHOP','ЗООМАГАЗИН','ЗООТОВАР'], cat: 'Животные' },
+  { patterns: ['БЕТХОВЕН','BEETHOVEN','VETERIN','ВЕТЕРИНАР','ВЕТКЛИН'], cat: 'Животные' },
+  { patterns: ['PET ','ЗООМИР','LEMURRR','ЛЕМУРР'], cat: 'Животные' },
+
+  // --- Путешествия ---
+  { patterns: ['BOOKING','БУКИНГ','HOTEL','ОТЕЛЬ','ГОСТИНИЦ','HOSTEL','ХОСТЕЛ'], cat: 'Путешествия' },
+  { patterns: ['AIRBNB','SUTOCHNO','СУТОЧНО','КВАРТИРОСЪЁМ'], cat: 'Путешествия' },
+  { patterns: ['TUTU.RU','ТУТУ','AVIASALES','АВИАСЕЙЛЗ','TRAVELATA'], cat: 'Путешествия' },
+  { patterns: ['OSTROVOK','ОСТРОВОК','LEVEL.TRAVEL'], cat: 'Путешествия' },
+
+  // --- Электроника ---
+  { patterns: ['DNS','ДНС','MVIDEO','М.ВИДЕО','М ВИДЕО','МВИДЕО'], cat: 'Электроника' },
+  { patterns: ['ELDORADO','ЭЛЬДОРАДО','CITILINK','СИТИЛИНК'], cat: 'Электроника' },
+  { patterns: ['RE:STORE','RESTORE','СВЯЗНОЙ','SVYAZNOY','МТС МАГАЗИН'], cat: 'Электроника' },
+  { patterns: ['SAMSUNG','XIAOMI','HUAWEI'], cat: 'Электроника' },
+
+  // --- Страхование ---
+  { patterns: ['STRAHOVANIE','СТРАХОВАНИ','OSAGO','ОСАГО','КАСКО','KASKO'], cat: 'Страхование' },
+  { patterns: ['INGOSSTRAKH','ИНГОССТРАХ','SOGAZ','СОГАЗ','RESO','РЕСО'], cat: 'Страхование' },
+  { patterns: ['АЛЬФАСТРАХ','ALFASTRAKH'], cat: 'Страхование' },
+
+  // --- Благотворительность ---
+  { patterns: ['БЛАГОТВОРИТЕЛ','CHARITY','ПОЖЕРТВОВАН','DONATION','ФОНД ПОМОЩ'], cat: 'Благотворительность' },
+
+  // --- Кредиты ---
+  { patterns: ['КРЕДИТ','CREDIT','ПРОЦЕНТ','INTEREST'], cat: 'Кредиты' },
+  { patterns: ['КРЕДИТНАЯ КАРТА','МИНИМАЛЬНЫЙ ПЛАТЁЖ','ПЛАТА ЗА ОБСЛУЖИВАНИЕ'], cat: 'Кредиты' },
+  { patterns: ['ПЛАТА ЗА ПРОГРАММУ','ПЛАТА ЗА ИСПОЛЬЗОВАНИЕ','КОМИССИЯ'], cat: 'Кредиты' },
+
+  // --- Дополнительные Еда ---
+  { patterns: ['ЧАЙХОНА','CHAYHONA','ТАНУКИ','TANUKI'], cat: 'Еда вне дома' },
+  { patterns: ['ЯКИТОРИЯ','YAKITORIYA','ГИННО','GINNO','IL PATIO','ИЛ ПАТИО'], cat: 'Еда вне дома' },
+  { patterns: ['КУЛИНАРИЯ','ВЫПЕЧКА','BAKEHOUSE','KONDITER','КОНДИТЕР'], cat: 'Еда вне дома' },
+
+  // --- Дополнительные Продукты ---
+  { patterns: ['СЕМИШАГОВ','7SHAGOV','МИНИ МАРКЕТ','MINIMARKET','ПРОДУКТЫ'], cat: 'Продукты' },
+  { patterns: ['ВИНЛАБ','WINLAB','АЛКОМАРКЕТ','АЛКОТЕКА'], cat: 'Продукты' },
+  { patterns: ['SBERMARKET','СБЕРМАРКЕТ','IGOOODS','СБЕР ЕАПТЕКА'], cat: 'Продукты' },
+
+  // --- Дополнительные Подписки ---
+  { patterns: ['WINK','ВИНК','START.RU','СТАРТ','PREMIER','ПРЕМЬЕР'], cat: 'Подписки и связь' },
+  { patterns: ['STORYTEL','ЛИТРЕС','LITRES','MYBOOK','МАЙБУК'], cat: 'Подписки и связь' },
+  { patterns: ['CHATGPT','OPENAI','MIDJOURNEY','GITHUB','NOTION'], cat: 'Подписки и связь' },
+  { patterns: ['YANDEX*360','YANDEX*MUSIC','ЯНДЕКС МУЗЫК'], cat: 'Подписки и связь' },
+
+  // --- Дополнительные Здоровье ---
+  { patterns: ['OZON PHARMA','ПЛАНЕТА ЗДОРОВ','БУДЬ ЗДОРОВ'], cat: 'Здоровье' },
+  { patterns: ['ТРЕНАЖЁР','ТРЕНАЖЕР','GYM','ФИТНЕС','FITNESS','СПОРТЗАЛ'], cat: 'Здоровье' },
+  { patterns: ['YOGA','ЙОГА','МАССАЖ','MASSAGE','SPA','СПА'], cat: 'Здоровье' },
+  { patterns: ['WORLDCLASS','WORLD CLASS','ALEXFITNESS','АЛЕКС ФИТНЕС'], cat: 'Здоровье' },
+
+  // --- Дополнительные Транспорт ---
+  { patterns: ['САМОКАТ','СКУТЕР','WHOOSH','URENT','ЮРЕНТ','JETSHARING'], cat: 'Транспорт' },
+  { patterns: ['ШЕРЕМЕТЬЕВО','ПУЛКОВО','ДОМОДЕДОВО','VNUKOVO','ВНУКОВО'], cat: 'Транспорт' },
+  { patterns: ['BUS','АВТОБУС','МАРШРУТ','ПРОЕЗД'], cat: 'Транспорт' },
+
+  // --- Дополнительные Развлечения ---
+  { patterns: ['BOWLING','БОУЛИНГ','БАТУТ','TRAMPOLINE','КВЕСТ','QUEST'], cat: 'Развлечения' },
+  { patterns: ['ПАРК РАЗВЛЕЧЕНИЙ','АТТРАКЦИОН','ЗООПАРК','ZOO','ПЛАНЕТАРИЙ'], cat: 'Развлечения' },
+  { patterns: ['КАТОК','SKATING','БИЛЕТ','TICKET'], cat: 'Развлечения' },
+
+  // --- Сбер-специфические паттерны (BUG-3 fix) ---
+  // Продукты (SberPay / MAPP_ variants)
+  { patterns: ['SBERBANK_ONL@IN_PAY RUS MOSKVA PYATEROCHKA','SBERBANK_ONL@IN_PAY RUS MOSKVA 5KA'], cat: 'Продукты' },
+  { patterns: ['SBERBANK_ONL@IN_PAY RUS MOSKVA MAGNIT','SBERBANK_ONL@IN_PAY RUS MOSKVA PEREKRESTOK'], cat: 'Продукты' },
+  { patterns: ['SBERBANK_ONL@IN_PAY RUS MOSKVA LENTA','SBERBANK_ONL@IN_PAY RUS MOSKVA VKUSVILL'], cat: 'Продукты' },
+
+  // Транспорт (SberPay / MAPP_)
+  { patterns: ['CITY MOBILE','CITIMOBIL','СИТИ МОБИЛ'], cat: 'Транспорт' },
+  { patterns: ['SBERBANK_ONL@IN_PAY RUS MOSKVA YANDEX'], cat: 'Транспорт' },
+
+  // Автомобиль (SberPay)
+  { patterns: ['BP_NEFTEPRODUKTY','BP NEFTEPRODUKTY','BP_NEFTEPROD','BRITISH PETROLEUM'], cat: 'Автомобиль' },
+  { patterns: ['NESTE','НЕСТЕ','EKA_','ЕКА_'], cat: 'Автомобиль' },
+
+  // Красота (SberPay)
+  { patterns: ['LETUAL','ЛЭТУАЛЬ','ЛЕТУАЛЬ','L\'ETOILE'], cat: 'Красота' },
+  { patterns: ['PODRUZHKA','ПОДРУЖКА','ИЛЬ ДЕ БОТЭ','ILDEBOTE'], cat: 'Красота' },
+
+  // Дети
+  { patterns: ['DETSKIY MIR','ДЕТСКИЙ МИР','ДОЧКИ СЫНОЧКИ','ДЕТМИР'], cat: 'Дети' },
+
+  // Кредиты / банковские услуги (Сбер)
+  { patterns: ['PLATI CHASTYAMI','ПЛАТИ ЧАСТЯМИ','РАССРОЧК','INSTALLMENT'], cat: 'Кредиты' },
+  { patterns: ['КОМИССИЯ ЗА','ПЛАТА ЗА ОБСЛУЖ','ГОДОВОЕ ОБСЛУЖ'], cat: 'Кредиты' },
+  { patterns: ['ПОГАШЕНИЕ ПРОЦЕНТ','МИНИМАЛЬНЫЙ ПЛАТЁЖ','МИНИМАЛЬНЫЙ ПЛАТЕЖ'], cat: 'Кредиты' },
+
+  // Благотворительность (Сбер)
+  { patterns: ['NETMONET','NETMONET.COM','ПОДПИСКА СБЕР ВМЕСТЕ'], cat: 'Благотворительность' },
+
+  // Кэшбэк / бонусы — убрать из расходов будет позже, пока в Прочее
+  { patterns: ['SP THANKYOU','СПАСИБО','CASHBACK','КЭШБЭК','КЕШБЭК'], cat: 'Прочее' },
+  { patterns: ['SBERPAY','SBER PAY'], cat: 'Прочее' }, // SberPay без конкретного мерчанта
+
+  // Дополнительные СБП-паттерны
+  { patterns: ['БЫСТРЫХ ПЛАТЕЖЕЙ','СИСТЕМА БЫСТРЫХ','СБП'], cat: 'Переводы' },
+
+  // Дополнительные магазины/сервисы
+  { patterns: ['PINGVIN','ПИНГВИН','ХИМЧИСТ'], cat: 'Дом' },
+  { patterns: ['ЧИСТЮЛЯ','CHISTULYA'], cat: 'Дом' },
+  { patterns: ['ЦВЕТЫ','FLOWERS','ФЛОРИСТ','FLORIST','БУКЕТ'], cat: 'Прочее' },
+  { patterns: ['ФОТО','PHOTO','ФОТОГРАФ'], cat: 'Развлечения' },
+  { patterns: ['ПОЧТА РОССИ','POCHTA','CDEK','СДЭК','BOXBERRY','БОКСБЕРРИ'], cat: 'Прочее' },
+  { patterns: ['МЕГАМАРТ','MEGAMART','МАГНОЛИЯ','MAGNOLIA'], cat: 'Продукты' },
+  { patterns: ['MIRATORG','МИРАТОРГ'], cat: 'Продукты' },
+  { patterns: ['MYASNOV','МЯСНОВ'], cat: 'Продукты' },
+  { patterns: ['РЫБНЫЙ','SEAFOOD'], cat: 'Продукты' },
+  { patterns: ['ВКУСНО И ТОЧКА','ROSTICS','РОСТИКС'], cat: 'Еда вне дома' },
+  { patterns: ['IL PATIO','ИЛ ПАТИО','PLANET SUSHI','ПЛАНЕТА СУШИ'], cat: 'Еда вне дома' },
+  { patterns: ['МОСИГРА','HOBBY','ХОББИ','КНИГА','BOOK','ЧИТАЙ-ГОРОД','ЧИТАЙ ГОРОД'], cat: 'Развлечения' },
+  { patterns: ['APTEKA.RU','ЕАПТЕКА','EAPTEKA','АПТЕКИ СТОЛИЧКИ'], cat: 'Здоровье' },
+  { patterns: ['РОСГОССТРАХ','ROSGOSSTRAH','ТИНЬКОФФ СТРАХОВ'], cat: 'Страхование' },
+  { patterns: ['МЕГАФОН БАНК','TELE2 BANK'], cat: 'Подписки и связь' },
+  { patterns: ['DOMCLICK','ДОМКЛИК','ЦИАН','CIAN','ЯНДЕКС НЕДВИЖИМ'], cat: 'Жильё' },
+
+  // --- Наличные (ATM снятия) ---
+  { patterns: ['ATM ','БАНКОМАТ','CASH WITHDRAWAL','СНЯТИЕ НАЛИЧНЫХ','ATM_'], cat: 'Наличные расход' },
+
+  // --- Автомобиль (доп.) ---
+  { patterns: ['АВТОПЛАТЁЖ ТАЧКА','АВТОПЛАТЕЖ ТАЧКА','ТАЧКА'], cat: 'Автомобиль' },
+  { patterns: ['TVEL-SPORT','ТВЕЛ-СПОРТ'], cat: 'Автомобиль' },
+
+  // --- Еда вне дома (доп. из выписок) ---
+  { patterns: ['UZHINDOMA','УЖИНДОМА','УЖИН ДОМА'], cat: 'Еда вне дома' },
+  { patterns: ['CHEFMARKET','ШЕФ МАРКЕТ','ШЕФМАРКЕТ'], cat: 'Еда вне дома' },
+
+  // --- Финансы / Инвестиции ---
+  { patterns: ['СБЕРНПФ','НПФ','ПЕНСИОНН','NPF'], cat: 'Перевод себе' },
+  { patterns: ['SBERBANK_ONL@IN VKLAD','VKLAD-KAR'], cat: 'Перевод себе' },
+
+  // --- Кабинет жителя / Дом ---
+  { patterns: ['KABINET-ZHITELYA','КАБИНЕТ ЖИТЕЛЯ','КАБИНЕТ-ЖИТЕЛЯ'], cat: 'Коммуналка' },
+
+  // --- Доп. маркетплейсы ---
+  { patterns: ['DDX','ДДХ'], cat: 'Маркетплейсы' },
+  { patterns: ['FAST BOX','FASTBOX','ФАСТ БОКС'], cat: 'Маркетплейсы' },
+
+  // --- Дом (доп.) ---
+  { patterns: ['YAKOB-ART','ЯКОБ-АРТ','ЯКОБ АРТ'], cat: 'Дом' },
+  { patterns: ['TROYA-LYUKS','ТРОЯ-ЛЮКС','ТРОЯ ЛЮКС','TROYA LYUKS'], cat: 'Дом' },
+  { patterns: ['ARED SPB','АРЕД СПБ'], cat: 'Дом' },
+
+  // --- Здоровье (доп.) ---
+  { patterns: ['ЯКОБ-ДЕНТИК','YAKOB-DENT','ДЕНТИК'], cat: 'Здоровье' },
+
+  // --- Страхование (доп.) ---
+  { patterns: ['OSK-INS','ОСК-ИНС','YM*OSK'], cat: 'Страхование' },
+
+  // --- Прочие внутренние платежи Сбер ---
+  { patterns: ['МОМЕНТАЛЬНЫЕ ПЛАТЕЖИ','SBSCR_МОМЕНТ'], cat: 'Переводы' },
+  { patterns: ['BPWWW','ОПЛАТА УСЛУГ'], cat: 'Прочее' },
+
+  // --- Доп. по данным из выписок ---
+  { patterns: ['РЯДКОМ','RDKOM'], cat: 'Продукты' },
+
+  // --- Фаза 2: новые правила для уменьшения «Прочее» ---
+  { patterns: ['SBSCR_СЕРВИСЫ ЯНДЕКСА','SBSCR_СЕРВИСЫ','SBSCR_СЕРВИ'], cat: 'Подписки и связь' },
+  { patterns: ['ZHOLOBOV VADIM','ЖОЛОБОВ'], cat: 'Развлечения' },
+  { patterns: ['ULYBKA RADUGI','УЛЫБКА РАДУГИ'], cat: 'Дом' },
+  { patterns: ['GALAMART','ГАЛАМАРТ'], cat: 'Дом' },
+  { patterns: ['NOVOE KACHESTVO DOROG','НОВОЕ КАЧЕСТВО ДОРОГ'], cat: 'Автомобиль' },
+  { patterns: ['WHSD','ЗСД'], cat: 'Автомобиль' },
+  { patterns: ['DINOLAND','ДИНОЛЕНД'], cat: 'Дети' },
+  { patterns: ['YANDEX*SCOOTERS','YANDEX*7999*SCOOTER','ЯНДЕКС*САМОКАТ'], cat: 'Транспорт' },
+  { patterns: ['YANDEX*GO_BERIZARYAD','YANDEX*GO_RUNCHARGE','ЯНДЕКС*ЗАРЯДКА'], cat: 'Транспорт' },
+  { patterns: ['KOPIMURINO','KOPI TSENTR','КОПИ ЦЕНТР','КОПИМУРИНО'], cat: 'Дом' },
+  { patterns: ['BUKVOED','БУКВОЕД'], cat: 'Дети' },
+  { patterns: ['CDEK','СДЭК'], cat: 'Маркетплейсы' },
+  { patterns: ['SPB DEVYATKINO','ДЕВЯТКИНО'], cat: 'Транспорт' },
+  { patterns: ['IP FILIPPOV','ИП ФИЛИППОВ'], cat: 'Развлечения' },
+  { patterns: ['IP DAUD ALADKHAM','ИП ДАУД'], cat: 'Еда вне дома' },
+  { patterns: ['ПЕРЕВОД СРЕДСТВ ИП'], cat: 'Перевод себе' },
+];
+
+var STATE = loadState(); // var: hoisted so categorizeTransaction() can safely check STATE during migrations
 let currentMonth = null; // 'YYYY-MM'
 let currentFilter = 'all';
 let currentCatFilter = null; // category name or null
@@ -450,7 +782,7 @@ function loadState() {
 
     return s;
   }
-  catch(e) { return defaultState(); }
+  catch(e) { console.error('[FinHelper] loadState CRASHED:', e.message, e.stack); return defaultState(); }
 }
 function saveState() {
   localStorage.setItem(APP_KEY, JSON.stringify(STATE));
@@ -545,338 +877,6 @@ const CATEGORIES = {
   'Страхование': { emoji: '🛡️', color: '#DFE6E9' },
   'Благотворительность': { emoji: '❤️', color: '#E84393' },
 };
-
-const MERCHANT_RULES = [
-  // --- Продукты ---
-  { patterns: ['PYATEROCHKA','ПЯТЕРОЧКА','ПЯТЁРОЧКА','5KA','PYATYOROCHKA'], cat: 'Продукты' },
-  { patterns: ['MAGNIT','МАГНИТ'], cat: 'Продукты' },
-  { patterns: ['PEREKRESTOK','ПЕРЕКРЁСТОК','ПЕРЕКРЕСТОК','PEREKRYOSTOK'], cat: 'Продукты' },
-  { patterns: ['LENTA','ЛЕНТА'], cat: 'Продукты' },
-  { patterns: ['VKUSVILL','ВКУСВИЛЛ','ВКУС ВИЛЛ'], cat: 'Продукты' },
-  { patterns: ['DIKSI','ДИКСИ'], cat: 'Продукты' },
-  { patterns: ['AUCHAN','АШАН'], cat: 'Продукты' },
-  { patterns: ['METRO CASH','МЕТРО КЭШ'], cat: 'Продукты' },
-  { patterns: ['SAMOKAT','САМОКАТ'], cat: 'Продукты' },
-  { patterns: ['AZBUKA','АЗБУКА ВКУСА'], cat: 'Продукты' },
-  { patterns: ['KRASNOE','КРАСНОЕ И БЕЛОЕ','КРАСНОЕ&БЕЛОЕ','KRASNOEIBELOE'], cat: 'Продукты' },
-  { patterns: ['BRISTOL','БРИСТОЛЬ'], cat: 'Продукты' },
-  { patterns: ['FIXPRICE','FIX PRICE','ФИКС ПРАЙС','ФИКСПРАЙС'], cat: 'Продукты' },
-  { patterns: ['GLOBUS','ГЛОБУС'], cat: 'Продукты' },
-  { patterns: ['SPAR','СПАР'], cat: 'Продукты' },
-  { patterns: ['ВЕРНЫЙ','VERNIY','VERNY'], cat: 'Продукты' },
-  { patterns: ['BILLA','БИЛЛА'], cat: 'Продукты' },
-  { patterns: ['PRISMA','ПРИЗМА'], cat: 'Продукты' },
-  { patterns: ['OKEY','О\'КЕЙ','ОКЕЙ'], cat: 'Продукты' },
-  { patterns: ['ТАБАКО','TABAKO'], cat: 'Продукты' },
-  { patterns: ['МЯСН','MYASN'], cat: 'Продукты' },
-  { patterns: ['BAKERY','ПЕКАРНЯ','ХЛЕБ'], cat: 'Продукты' },
-  { patterns: ['LAVKA','ЛАВКА','YANDEX*LAVKA','ЯНДЕКС*ЛАВКА','YANDEX*5411*LAVKA'], cat: 'Продукты' },
-  { patterns: ['SBERMARKET','СБЕРМАРКЕТ'], cat: 'Продукты' },
-  { patterns: ['VPROK','ВПРОК'], cat: 'Продукты' },
-
-  // --- Еда вне дома ---
-  { patterns: ['YANDEX EDA','ЯНДЕКС ЕДА','YANDEX*EDA'], cat: 'Еда вне дома' },
-  { patterns: ['DELIVERY','ДЕЛИВЕРИ'], cat: 'Еда вне дома' },
-  { patterns: ['MCDONALD','МАКДОНАЛД','ВКУСНО И ТОЧКА','VKUSNO I TOCHKA'], cat: 'Еда вне дома' },
-  { patterns: ['KFC','КФС'], cat: 'Еда вне дома' },
-  { patterns: ['BURGER KING','БУРГЕР КИНГ'], cat: 'Еда вне дома' },
-  { patterns: ['DODO','ДОДО'], cat: 'Еда вне дома' },
-  { patterns: ['SUSHI','СУШИ'], cat: 'Еда вне дома' },
-  { patterns: ['STARBUCKS','СТАРБАКС'], cat: 'Еда вне дома' },
-  { patterns: ['ШОКОЛАДНИЦА','SHOKOLADNICA'], cat: 'Еда вне дома' },
-  { patterns: ['COFFEE','КОФЕ','COFIX','КОФИКС'], cat: 'Еда вне дома' },
-  { patterns: ['ПИЦЦА','PIZZA','ПИЦЦЕРИЯ'], cat: 'Еда вне дома' },
-  { patterns: ['ШАВЕРМА','SHAVERMA','ШАУРМА','SHAWARMA','ДЖУДОС','JUDOS'], cat: 'Еда вне дома' },
-  { patterns: ['РЕСТОРАН','RESTORAN','RESTAURANT'], cat: 'Еда вне дома' },
-  { patterns: ['КАФЕ','CAFE','СТОЛОВАЯ'], cat: 'Еда вне дома' },
-  { patterns: ['BAR ','БАР ','ПАСТА','PASTA'], cat: 'Еда вне дома' },
-  { patterns: ['ТЕРЕМОК','TEREMOK'], cat: 'Еда вне дома' },
-  { patterns: ['SUBWAY','САБВЕЙ'], cat: 'Еда вне дома' },
-  { patterns: ['FUDTRAK','ФУДТРАК'], cat: 'Еда вне дома' },
-
-  // --- Транспорт ---
-  { patterns: ['YANDEX TAXI','ЯНДЕКС ТАКСИ','YANDEX*TAXI','YANDEX GO'], cat: 'Транспорт' },
-  { patterns: ['UBER','УБЕР'], cat: 'Транспорт' },
-  { patterns: ['CITIMOBIL','СИТИМОБИЛ'], cat: 'Транспорт' },
-  { patterns: ['YANDEX DRIVE','ЯНДЕКС ДРАЙВ','DELIMOBIL','ДЕЛИМОБИЛЬ'], cat: 'Транспорт' },
-  { patterns: ['RZD','РЖД','RZHDRU'], cat: 'Транспорт' },
-  { patterns: ['AEROFLOT','АЭРОФЛОТ','S7','ПОБЕДА','POBEDA'], cat: 'Транспорт' },
-  { patterns: ['METRO','МЕТРО','МЕТРОПОЛИТЕН','TROIKA','ТРОЙКА'], cat: 'Транспорт' },
-  { patterns: ['PARKING','ПАРКОВКА'], cat: 'Транспорт' },
-
-  // --- Автомобиль ---
-  { patterns: ['LUKOIL','ЛУКОЙЛ'], cat: 'Автомобиль' },
-  { patterns: ['GAZPROM','ГАЗПРОМ'], cat: 'Автомобиль' },
-  { patterns: ['ROSNEFT','РОСНЕФТЬ'], cat: 'Автомобиль' },
-  { patterns: ['TATNEFT','ТАТНЕФТЬ'], cat: 'Автомобиль' },
-  { patterns: ['SHELL','ШЕЛЛ'], cat: 'Автомобиль' },
-  { patterns: ['AZS','АЗС','БЕНЗИН','BENZIN'], cat: 'Автомобиль' },
-  { patterns: ['АВТОМОЙКА','AVTOMOYKA','МОЙКА','MOYKA'], cat: 'Автомобиль' },
-  { patterns: ['TROFIMOV','ТРОФИМОВ'], cat: 'Автомобиль' }, // из выписки — шиномонтаж
-  { patterns: ['11180 KAD','TOLL','ПЛАТНАЯ ДОРОГА','АВТОДОР','AVTODOR','NOTHERN CAPITAL'], cat: 'Автомобиль' },
-
-  // --- Подписки и связь ---
-  { patterns: ['MTS','МТС','PAY.MTS'], cat: 'Подписки и связь' },
-  { patterns: ['BEELINE','БИЛАЙН'], cat: 'Подписки и связь' },
-  { patterns: ['MEGAFON','МЕГАФОН'], cat: 'Подписки и связь' },
-  { patterns: ['TELE2','ТЕЛЕ2'], cat: 'Подписки и связь' },
-  { patterns: ['ROSTELEKOM','РОСТЕЛЕКОМ'], cat: 'Подписки и связь' },
-  { patterns: ['NETFLIX'], cat: 'Подписки и связь' },
-  { patterns: ['KINOPOISK','КИНОПОИСК'], cat: 'Подписки и связь' },
-  { patterns: ['IVI','ИВИ'], cat: 'Подписки и связь' },
-  { patterns: ['OKKO','ОККО'], cat: 'Подписки и связь' },
-  { patterns: ['YANDEX PLUS','ЯНДЕКС ПЛЮС','YA.PLUS'], cat: 'Подписки и связь' },
-  { patterns: ['SPOTIFY'], cat: 'Подписки и связь' },
-  { patterns: ['YOUTUBE PREMIUM','YOUTUBE PREM'], cat: 'Подписки и связь' },
-  { patterns: ['APPLE.COM','APPLE STORE','ITUNES'], cat: 'Подписки и связь' },
-  { patterns: ['GOOGLE*','GOOGLE PLAY','GOOGLEPLAY'], cat: 'Подписки и связь' },
-  { patterns: ['T-MOBILE','T-BUNDLE','TMMB.T-MOBILE'], cat: 'Подписки и связь' },
-  { patterns: ['SMOTRESHKA','СМОТРЁШКА'], cat: 'Подписки и связь' },
-  { patterns: ['DEDVPN','VPN'], cat: 'Подписки и связь' },
-  { patterns: ['УЮТ ТЕЛЕКОМ','UYT TELEKOM'], cat: 'Подписки и связь' },
-
-  // --- Маркетплейсы ---
-  { patterns: ['OZON','ОЗОН'], cat: 'Маркетплейсы' },
-  { patterns: ['WILDBERRIES','ВАЙЛДБЕРРИЗ','WB'], cat: 'Маркетплейсы' },
-  { patterns: ['YANDEX MARKET','ЯНДЕКС МАРКЕТ','YA.MARKET'], cat: 'Маркетплейсы' },
-  { patterns: ['ALIEXPRESS','АЛИЭКСПРЕСС','ALI'], cat: 'Маркетплейсы' },
-  { patterns: ['LAMODA','ЛАМОДА'], cat: 'Маркетплейсы' },
-  { patterns: ['SBERMEGAMARKET','СБЕРМЕГАМАРКЕТ','MEGAMARKET'], cat: 'Маркетплейсы' },
-  { patterns: ['AVITO','АВИТО','TBANK-AVITO'], cat: 'Маркетплейсы' },
-
-  // --- Здоровье ---
-  { patterns: ['APTEKA','АПТЕКА','PHARMACY','ФАРМАЦИЯ'], cat: 'Здоровье' },
-  { patterns: ['GORZDRAV','ГОРЗДРАВ'], cat: 'Здоровье' },
-  { patterns: ['RIGLA','РИГЛА'], cat: 'Здоровье' },
-  { patterns: ['STOLICHKI','СТОЛИЧКИ'], cat: 'Здоровье' },
-  { patterns: ['36.6','366'], cat: 'Здоровье' },
-  { patterns: ['CLINIC','КЛИНИКА','DENTAL','СТОМАТОЛ','МЕДИЦИН','MEDIC'], cat: 'Здоровье' },
-  { patterns: ['INVITRO','ИНВИТРО','HELIX','ХЕЛИКС'], cat: 'Здоровье' },
-
-  // --- Красота ---
-  { patterns: ['ATRIBEAUTE','BEAUTY','КРАСОТ','САЛОН','БАРБЕР','BARBER'], cat: 'Красота' },
-  { patterns: ['ПАРИКМАХ','HAIRDRESS','НОГТ','NAIL','МАНИКЮР'], cat: 'Красота' },
-  { patterns: ['COSMETIC','КОСМЕТИК','ЗОЛОТОЕ ЯБЛОКО','LUSH','РИВА','RIVE'], cat: 'Красота' },
-
-  // --- Одежда ---
-  { patterns: ['ZARA','ЗАРА'], cat: 'Одежда' },
-  { patterns: ['H&M','H AND M','HM '], cat: 'Одежда' },
-  { patterns: ['UNIQLO','ЮНИКЛО'], cat: 'Одежда' },
-  { patterns: ['GLORIA','ГЛОРИЯ'], cat: 'Одежда' },
-  { patterns: ['SPORTMASTER','СПОРТМАСТЕР'], cat: 'Одежда' },
-  { patterns: ['DECATHLON','ДЕКАТЛОН'], cat: 'Одежда' },
-  { patterns: ['RESERVED','BERSHKA','PULL&BEAR','STRADIVARIUS'], cat: 'Одежда' },
-  { patterns: ['ADIDAS','NIKE','PUMA','REEBOK'], cat: 'Одежда' },
-
-  // --- Жильё ---
-  { patterns: ['IPOTEKA','ИПОТЕКА','MORTGAGE'], cat: 'Жильё' },
-  { patterns: ['ARENDA','АРЕНДА','RENT'], cat: 'Жильё' },
-
-  // --- Коммуналка ---
-  { patterns: ['GIS ZKH','ГИС ЖКХ','ЖКХ','KOMMUNAL','КОММУНАЛ','EPR_GIS'], cat: 'Коммуналка' },
-  { patterns: ['ЭЛЕКТРИЧЕСТВО','ЭЛЕКТРОЭНЕРГ','TGK','ТГК','МОСЭНЕРГ','ЭНЕРГО'], cat: 'Коммуналка' },
-  { patterns: ['ВОДОКАНАЛ','ВОДОСН'], cat: 'Коммуналка' },
-
-  // --- Развлечения ---
-  { patterns: ['CINEMA','КИНО','КИНОТЕАТР','КАРО','KARO','СИНЕМА'], cat: 'Развлечения' },
-  { patterns: ['GAME','GAMING','STEAM','PLAYSTATION','XBOX'], cat: 'Развлечения' },
-  { patterns: ['CONCERT','КОНЦЕРТ','ТЕАТР','THEATER','МУЗЕЙ','MUSEUM'], cat: 'Развлечения' },
-  { patterns: ['AIJORA'], cat: 'Развлечения' },
-  { patterns: ['LOGICLIKE'], cat: 'Дети' },
-
-  // --- Дети ---
-  { patterns: ['ДЕТСКИЙ','DETSKI','KIDS','MOTHERCARE'], cat: 'Дети' },
-  { patterns: ['ДОЧКИ-СЫНОЧКИ','КОРАБЛИК','KORABLIK'], cat: 'Дети' },
-
-  // --- Образование ---
-  { patterns: ['COURSE','КУРС','SKILLBOX','SKILLFACTORY','GEEKBRAINS','НЕТОЛОГИЯ'], cat: 'Образование' },
-
-  // --- Дом ---
-  { patterns: ['LEROY','ЛЕРУА','ЛЕМАНА','LEMANAPRO'], cat: 'Дом' },
-  { patterns: ['IKEA','ИКЕА','HOFF','ХОФФ'], cat: 'Дом' },
-  { patterns: ['OBI','ОБИ'], cat: 'Дом' },
-  { patterns: ['ASKONA','АСКОНА','LAZURIT','ЛАЗУРИТ'], cat: 'Дом' },
-  { patterns: ['PETROVICH','ПЕТРОВИЧ','СТРОЙМАТЕРИАЛ'], cat: 'Дом' },
-  { patterns: ['CASTORAMA','КАСТОРАМА','MAXIDOM','МАКСИДОМ'], cat: 'Дом' },
-  { patterns: ['SPB_NEBO','TRC NEBO','ТРЦ НЕБО','NEBO'], cat: 'Дом' },
-  { patterns: ['AFONYA','АФОНЯ'], cat: 'Дом' },
-  { patterns: ['МЕБЕЛЬ','MEBELSHIK','FURNITURE','МИРОНИКА'], cat: 'Дом' },
-  { patterns: ['УБОРКА','CLEANING','КЛИНИН','ХИМЧИСТ','ПРАЧЕЧН','LAUNDRY'], cat: 'Дом' },
-
-  // --- Животные ---
-  { patterns: ['ЧЕТЫРЕ ЛАПЫ','4LAPY','PETSHOP','ЗООМАГАЗИН','ЗООТОВАР'], cat: 'Животные' },
-  { patterns: ['БЕТХОВЕН','BEETHOVEN','VETERIN','ВЕТЕРИНАР','ВЕТКЛИН'], cat: 'Животные' },
-  { patterns: ['PET ','ЗООМИР','LEMURRR','ЛЕМУРР'], cat: 'Животные' },
-
-  // --- Путешествия ---
-  { patterns: ['BOOKING','БУКИНГ','HOTEL','ОТЕЛЬ','ГОСТИНИЦ','HOSTEL','ХОСТЕЛ'], cat: 'Путешествия' },
-  { patterns: ['AIRBNB','SUTOCHNO','СУТОЧНО','КВАРТИРОСЪЁМ'], cat: 'Путешествия' },
-  { patterns: ['TUTU.RU','ТУТУ','AVIASALES','АВИАСЕЙЛЗ','TRAVELATA'], cat: 'Путешествия' },
-  { patterns: ['OSTROVOK','ОСТРОВОК','LEVEL.TRAVEL'], cat: 'Путешествия' },
-
-  // --- Электроника ---
-  { patterns: ['DNS','ДНС','MVIDEO','М.ВИДЕО','М ВИДЕО','МВИДЕО'], cat: 'Электроника' },
-  { patterns: ['ELDORADO','ЭЛЬДОРАДО','CITILINK','СИТИЛИНК'], cat: 'Электроника' },
-  { patterns: ['RE:STORE','RESTORE','СВЯЗНОЙ','SVYAZNOY','МТС МАГАЗИН'], cat: 'Электроника' },
-  { patterns: ['SAMSUNG','XIAOMI','HUAWEI'], cat: 'Электроника' },
-
-  // --- Страхование ---
-  { patterns: ['STRAHOVANIE','СТРАХОВАНИ','OSAGO','ОСАГО','КАСКО','KASKO'], cat: 'Страхование' },
-  { patterns: ['INGOSSTRAKH','ИНГОССТРАХ','SOGAZ','СОГАЗ','RESO','РЕСО'], cat: 'Страхование' },
-  { patterns: ['АЛЬФАСТРАХ','ALFASTRAKH'], cat: 'Страхование' },
-
-  // --- Благотворительность ---
-  { patterns: ['БЛАГОТВОРИТЕЛ','CHARITY','ПОЖЕРТВОВАН','DONATION','ФОНД ПОМОЩ'], cat: 'Благотворительность' },
-
-  // --- Кредиты ---
-  { patterns: ['КРЕДИТ','CREDIT','ПРОЦЕНТ','INTEREST'], cat: 'Кредиты' },
-  { patterns: ['КРЕДИТНАЯ КАРТА','МИНИМАЛЬНЫЙ ПЛАТЁЖ','ПЛАТА ЗА ОБСЛУЖИВАНИЕ'], cat: 'Кредиты' },
-  { patterns: ['ПЛАТА ЗА ПРОГРАММУ','ПЛАТА ЗА ИСПОЛЬЗОВАНИЕ','КОМИССИЯ'], cat: 'Кредиты' },
-
-  // --- Дополнительные Еда ---
-  { patterns: ['ЧАЙХОНА','CHAYHONA','ТАНУКИ','TANUKI'], cat: 'Еда вне дома' },
-  { patterns: ['ЯКИТОРИЯ','YAKITORIYA','ГИННО','GINNO','IL PATIO','ИЛ ПАТИО'], cat: 'Еда вне дома' },
-  { patterns: ['КУЛИНАРИЯ','ВЫПЕЧКА','BAKEHOUSE','KONDITER','КОНДИТЕР'], cat: 'Еда вне дома' },
-
-  // --- Дополнительные Продукты ---
-  { patterns: ['СЕМИШАГОВ','7SHAGOV','МИНИ МАРКЕТ','MINIMARKET','ПРОДУКТЫ'], cat: 'Продукты' },
-  { patterns: ['ВИНЛАБ','WINLAB','АЛКОМАРКЕТ','АЛКОТЕКА'], cat: 'Продукты' },
-  { patterns: ['SBERMARKET','СБЕРМАРКЕТ','IGOOODS','СБЕР ЕАПТЕКА'], cat: 'Продукты' },
-
-  // --- Дополнительные Подписки ---
-  { patterns: ['WINK','ВИНК','START.RU','СТАРТ','PREMIER','ПРЕМЬЕР'], cat: 'Подписки и связь' },
-  { patterns: ['STORYTEL','ЛИТРЕС','LITRES','MYBOOK','МАЙБУК'], cat: 'Подписки и связь' },
-  { patterns: ['CHATGPT','OPENAI','MIDJOURNEY','GITHUB','NOTION'], cat: 'Подписки и связь' },
-  { patterns: ['YANDEX*360','YANDEX*MUSIC','ЯНДЕКС МУЗЫК'], cat: 'Подписки и связь' },
-
-  // --- Дополнительные Здоровье ---
-  { patterns: ['OZON PHARMA','ПЛАНЕТА ЗДОРОВ','БУДЬ ЗДОРОВ'], cat: 'Здоровье' },
-  { patterns: ['ТРЕНАЖЁР','ТРЕНАЖЕР','GYM','ФИТНЕС','FITNESS','СПОРТЗАЛ'], cat: 'Здоровье' },
-  { patterns: ['YOGA','ЙОГА','МАССАЖ','MASSAGE','SPA','СПА'], cat: 'Здоровье' },
-  { patterns: ['WORLDCLASS','WORLD CLASS','ALEXFITNESS','АЛЕКС ФИТНЕС'], cat: 'Здоровье' },
-
-  // --- Дополнительные Транспорт ---
-  { patterns: ['САМОКАТ','СКУТЕР','WHOOSH','URENT','ЮРЕНТ','JETSHARING'], cat: 'Транспорт' },
-  { patterns: ['ШЕРЕМЕТЬЕВО','ПУЛКОВО','ДОМОДЕДОВО','VNUKOVO','ВНУКОВО'], cat: 'Транспорт' },
-  { patterns: ['BUS','АВТОБУС','МАРШРУТ','ПРОЕЗД'], cat: 'Транспорт' },
-
-  // --- Дополнительные Развлечения ---
-  { patterns: ['BOWLING','БОУЛИНГ','БАТУТ','TRAMPOLINE','КВЕСТ','QUEST'], cat: 'Развлечения' },
-  { patterns: ['ПАРК РАЗВЛЕЧЕНИЙ','АТТРАКЦИОН','ЗООПАРК','ZOO','ПЛАНЕТАРИЙ'], cat: 'Развлечения' },
-  { patterns: ['КАТОК','SKATING','БИЛЕТ','TICKET'], cat: 'Развлечения' },
-
-  // --- Сбер-специфические паттерны (BUG-3 fix) ---
-  // Продукты (SberPay / MAPP_ variants)
-  { patterns: ['SBERBANK_ONL@IN_PAY RUS MOSKVA PYATEROCHKA','SBERBANK_ONL@IN_PAY RUS MOSKVA 5KA'], cat: 'Продукты' },
-  { patterns: ['SBERBANK_ONL@IN_PAY RUS MOSKVA MAGNIT','SBERBANK_ONL@IN_PAY RUS MOSKVA PEREKRESTOK'], cat: 'Продукты' },
-  { patterns: ['SBERBANK_ONL@IN_PAY RUS MOSKVA LENTA','SBERBANK_ONL@IN_PAY RUS MOSKVA VKUSVILL'], cat: 'Продукты' },
-
-  // Транспорт (SberPay / MAPP_)
-  { patterns: ['CITY MOBILE','CITIMOBIL','СИТИ МОБИЛ'], cat: 'Транспорт' },
-  { patterns: ['SBERBANK_ONL@IN_PAY RUS MOSKVA YANDEX'], cat: 'Транспорт' },
-
-  // Автомобиль (SberPay)
-  { patterns: ['BP_NEFTEPRODUKTY','BP NEFTEPRODUKTY','BP_NEFTEPROD','BRITISH PETROLEUM'], cat: 'Автомобиль' },
-  { patterns: ['NESTE','НЕСТЕ','EKA_','ЕКА_'], cat: 'Автомобиль' },
-
-  // Красота (SberPay)
-  { patterns: ['LETUAL','ЛЭТУАЛЬ','ЛЕТУАЛЬ','L\'ETOILE'], cat: 'Красота' },
-  { patterns: ['PODRUZHKA','ПОДРУЖКА','ИЛЬ ДЕ БОТЭ','ILDEBOTE'], cat: 'Красота' },
-
-  // Дети
-  { patterns: ['DETSKIY MIR','ДЕТСКИЙ МИР','ДОЧКИ СЫНОЧКИ','ДЕТМИР'], cat: 'Дети' },
-
-  // Кредиты / банковские услуги (Сбер)
-  { patterns: ['PLATI CHASTYAMI','ПЛАТИ ЧАСТЯМИ','РАССРОЧК','INSTALLMENT'], cat: 'Кредиты' },
-  { patterns: ['КОМИССИЯ ЗА','ПЛАТА ЗА ОБСЛУЖ','ГОДОВОЕ ОБСЛУЖ'], cat: 'Кредиты' },
-  { patterns: ['ПОГАШЕНИЕ ПРОЦЕНТ','МИНИМАЛЬНЫЙ ПЛАТЁЖ','МИНИМАЛЬНЫЙ ПЛАТЕЖ'], cat: 'Кредиты' },
-
-  // Благотворительность (Сбер)
-  { patterns: ['NETMONET','NETMONET.COM','ПОДПИСКА СБЕР ВМЕСТЕ'], cat: 'Благотворительность' },
-
-  // Кэшбэк / бонусы — убрать из расходов будет позже, пока в Прочее
-  { patterns: ['SP THANKYOU','СПАСИБО','CASHBACK','КЭШБЭК','КЕШБЭК'], cat: 'Прочее' },
-  { patterns: ['SBERPAY','SBER PAY'], cat: 'Прочее' }, // SberPay без конкретного мерчанта
-
-  // Дополнительные СБП-паттерны
-  { patterns: ['БЫСТРЫХ ПЛАТЕЖЕЙ','СИСТЕМА БЫСТРЫХ','СБП'], cat: 'Переводы' },
-
-  // Дополнительные магазины/сервисы
-  { patterns: ['PINGVIN','ПИНГВИН','ХИМЧИСТ'], cat: 'Дом' },
-  { patterns: ['ЧИСТЮЛЯ','CHISTULYA'], cat: 'Дом' },
-  { patterns: ['ЦВЕТЫ','FLOWERS','ФЛОРИСТ','FLORIST','БУКЕТ'], cat: 'Прочее' },
-  { patterns: ['ФОТО','PHOTO','ФОТОГРАФ'], cat: 'Развлечения' },
-  { patterns: ['ПОЧТА РОССИ','POCHTA','CDEK','СДЭК','BOXBERRY','БОКСБЕРРИ'], cat: 'Прочее' },
-  { patterns: ['МЕГАМАРТ','MEGAMART','МАГНОЛИЯ','MAGNOLIA'], cat: 'Продукты' },
-  { patterns: ['MIRATORG','МИРАТОРГ'], cat: 'Продукты' },
-  { patterns: ['MYASNOV','МЯСНОВ'], cat: 'Продукты' },
-  { patterns: ['РЫБНЫЙ','SEAFOOD'], cat: 'Продукты' },
-  { patterns: ['ВКУСНО И ТОЧКА','ROSTICS','РОСТИКС'], cat: 'Еда вне дома' },
-  { patterns: ['IL PATIO','ИЛ ПАТИО','PLANET SUSHI','ПЛАНЕТА СУШИ'], cat: 'Еда вне дома' },
-  { patterns: ['МОСИГРА','HOBBY','ХОББИ','КНИГА','BOOK','ЧИТАЙ-ГОРОД','ЧИТАЙ ГОРОД'], cat: 'Развлечения' },
-  { patterns: ['APTEKA.RU','ЕАПТЕКА','EAPTEKA','АПТЕКИ СТОЛИЧКИ'], cat: 'Здоровье' },
-  { patterns: ['РОСГОССТРАХ','ROSGOSSTRAH','ТИНЬКОФФ СТРАХОВ'], cat: 'Страхование' },
-  { patterns: ['МЕГАФОН БАНК','TELE2 BANK'], cat: 'Подписки и связь' },
-  { patterns: ['DOMCLICK','ДОМКЛИК','ЦИАН','CIAN','ЯНДЕКС НЕДВИЖИМ'], cat: 'Жильё' },
-
-  // --- Наличные (ATM снятия) ---
-  { patterns: ['ATM ','БАНКОМАТ','CASH WITHDRAWAL','СНЯТИЕ НАЛИЧНЫХ','ATM_'], cat: 'Наличные расход' },
-
-  // --- Автомобиль (доп.) ---
-  { patterns: ['АВТОПЛАТЁЖ ТАЧКА','АВТОПЛАТЕЖ ТАЧКА','ТАЧКА'], cat: 'Автомобиль' },
-  { patterns: ['TVEL-SPORT','ТВЕЛ-СПОРТ'], cat: 'Автомобиль' },
-
-  // --- Еда вне дома (доп. из выписок) ---
-  { patterns: ['UZHINDOMA','УЖИНДОМА','УЖИН ДОМА'], cat: 'Еда вне дома' },
-  { patterns: ['CHEFMARKET','ШЕФ МАРКЕТ','ШЕФМАРКЕТ'], cat: 'Еда вне дома' },
-
-  // --- Финансы / Инвестиции ---
-  { patterns: ['СБЕРНПФ','НПФ','ПЕНСИОНН','NPF'], cat: 'Перевод себе' },
-  { patterns: ['SBERBANK_ONL@IN VKLAD','VKLAD-KAR'], cat: 'Перевод себе' },
-
-  // --- Кабинет жителя / Дом ---
-  { patterns: ['KABINET-ZHITELYA','КАБИНЕТ ЖИТЕЛЯ','КАБИНЕТ-ЖИТЕЛЯ'], cat: 'Коммуналка' },
-
-  // --- Доп. маркетплейсы ---
-  { patterns: ['DDX','ДДХ'], cat: 'Маркетплейсы' },
-  { patterns: ['FAST BOX','FASTBOX','ФАСТ БОКС'], cat: 'Маркетплейсы' },
-
-  // --- Дом (доп.) ---
-  { patterns: ['YAKOB-ART','ЯКОБ-АРТ','ЯКОБ АРТ'], cat: 'Дом' },
-  { patterns: ['TROYA-LYUKS','ТРОЯ-ЛЮКС','ТРОЯ ЛЮКС','TROYA LYUKS'], cat: 'Дом' },
-  { patterns: ['ARED SPB','АРЕД СПБ'], cat: 'Дом' },
-
-  // --- Здоровье (доп.) ---
-  { patterns: ['ЯКОБ-ДЕНТИК','YAKOB-DENT','ДЕНТИК'], cat: 'Здоровье' },
-
-  // --- Страхование (доп.) ---
-  { patterns: ['OSK-INS','ОСК-ИНС','YM*OSK'], cat: 'Страхование' },
-
-  // --- Прочие внутренние платежи Сбер ---
-  { patterns: ['МОМЕНТАЛЬНЫЕ ПЛАТЕЖИ','SBSCR_МОМЕНТ'], cat: 'Переводы' },
-  { patterns: ['BPWWW','ОПЛАТА УСЛУГ'], cat: 'Прочее' },
-
-  // --- Доп. по данным из выписок ---
-  { patterns: ['РЯДКОМ','RDKOM'], cat: 'Продукты' },
-
-  // --- Фаза 2: новые правила для уменьшения «Прочее» ---
-  { patterns: ['SBSCR_СЕРВИСЫ ЯНДЕКСА','SBSCR_СЕРВИСЫ','SBSCR_СЕРВИ'], cat: 'Подписки и связь' },
-  { patterns: ['ZHOLOBOV VADIM','ЖОЛОБОВ'], cat: 'Развлечения' },
-  { patterns: ['ULYBKA RADUGI','УЛЫБКА РАДУГИ'], cat: 'Дом' },
-  { patterns: ['GALAMART','ГАЛАМАРТ'], cat: 'Дом' },
-  { patterns: ['NOVOE KACHESTVO DOROG','НОВОЕ КАЧЕСТВО ДОРОГ'], cat: 'Автомобиль' },
-  { patterns: ['WHSD','ЗСД'], cat: 'Автомобиль' },
-  { patterns: ['DINOLAND','ДИНОЛЕНД'], cat: 'Дети' },
-  { patterns: ['YANDEX*SCOOTERS','YANDEX*7999*SCOOTER','ЯНДЕКС*САМОКАТ'], cat: 'Транспорт' },
-  { patterns: ['YANDEX*GO_BERIZARYAD','YANDEX*GO_RUNCHARGE','ЯНДЕКС*ЗАРЯДКА'], cat: 'Транспорт' },
-  { patterns: ['KOPIMURINO','KOPI TSENTR','КОПИ ЦЕНТР','КОПИМУРИНО'], cat: 'Дом' },
-  { patterns: ['BUKVOED','БУКВОЕД'], cat: 'Дети' },
-  { patterns: ['CDEK','СДЭК'], cat: 'Маркетплейсы' },
-  { patterns: ['SPB DEVYATKINO','ДЕВЯТКИНО'], cat: 'Транспорт' },
-  { patterns: ['IP FILIPPOV','ИП ФИЛИППОВ'], cat: 'Развлечения' },
-  { patterns: ['IP DAUD ALADKHAM','ИП ДАУД'], cat: 'Еда вне дома' },
-  { patterns: ['ПЕРЕВОД СРЕДСТВ ИП'], cat: 'Перевод себе' },
-];
 
 function categorizeTransaction(desc, bankCat) {
   const upper = (desc || '').toUpperCase();
@@ -1020,8 +1020,9 @@ function classifyTransferType(desc, bankCat, isIncome) {
   }
 
   // FIX-8: User-defined income rules (salary, etc.)
-  if (isIncome && STATE.incomeRules && STATE.incomeRules.length > 0) {
-    for (const rule of STATE.incomeRules) {
+  const incRules = (typeof STATE !== 'undefined' && STATE?.incomeRules) || [];
+  if (isIncome && incRules.length > 0) {
+    for (const rule of incRules) {
       if (upper.includes(rule.toUpperCase())) {
         return { type: 'income', category: 'Зарплата' };
       }
