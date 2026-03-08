@@ -408,12 +408,37 @@ function loadState() {
       if (fixed > 0) console.log(`[FinHelper] Migration v10: fixed ${fixed} transfer types`);
     }
 
-    // Migration v11: re-categorize «Прочее» with new merchant rules + business contacts
+    // Migration v11: re-categorize «Прочее» with MERCHANT_RULES (can't call categorizeTransaction — STATE not ready)
     if (!s._migrationRecatV11) {
       let fixed = 0;
       for (const tx of s.transactions) {
         if (tx.category !== 'Прочее' || tx._userEdited) continue;
-        const newCat = categorizeTransaction(tx.description, tx.bankCategory);
+        const upper = (tx.description || '').toUpperCase();
+        let newCat = null;
+        // Apply merchant rules
+        for (const rule of MERCHANT_RULES) {
+          for (const pat of rule.patterns) {
+            if (upper.includes(pat.toUpperCase())) { newCat = rule.cat; break; }
+          }
+          if (newCat) break;
+        }
+        // Also try cleaned description (strip MAPP_SBERBANK prefix)
+        if (!newCat && (upper.includes('MAPP_') || upper.includes('ONL@IN'))) {
+          const cleaned = upper.replace(/^MAPP_/i, '').replace(/SBERBANK_?/gi, '').replace(/ONL@IN_?PAY/gi, '').replace(/_/g, ' ').trim();
+          for (const rule of MERCHANT_RULES) {
+            for (const pat of rule.patterns) {
+              if (cleaned.includes(pat.toUpperCase())) { newCat = rule.cat; break; }
+            }
+            if (newCat) break;
+          }
+        }
+        // Business contacts
+        if (!newCat && upper.includes('ПЕРЕВОД')) {
+          const bizContacts = ['ГАСАНАГА', 'М. ГАСАНАГА', 'К. АННА ВИКТОРОВНА', 'К. ЖАННА ВАСИЛЬЕВН', 'Н. АНЖЕЛИКА ИВАНОВ', 'П. ВИКТОР АНДРЕЕВИ', 'Н. ЕВГЕНИЙ ВИКТОРО', 'Ф. ОКСАНА НИКОЛАЕВ', 'Б. РАИСА'];
+          for (const c of bizContacts) {
+            if (upper.includes(c.toUpperCase())) { newCat = 'Бизнес'; break; }
+          }
+        }
         if (newCat && newCat !== 'Прочее') {
           tx.category = newCat;
           fixed++;
@@ -857,7 +882,8 @@ function categorizeTransaction(desc, bankCat) {
   const upper = (desc || '').toUpperCase();
 
   // 1. Custom user rules
-  for (const [merchant, cat] of Object.entries(STATE.customRules)) {
+  const customRules = (typeof STATE !== 'undefined' && STATE?.customRules) || {};
+  for (const [merchant, cat] of Object.entries(customRules)) {
     if (upper.includes(merchant.toUpperCase())) return cat;
   }
 
