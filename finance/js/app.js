@@ -5,9 +5,9 @@
 const APP_KEY = 'financeHelper_v1';
 
 // Deterministic hash for transaction IDs (deduplication-safe)
-function txHash(bank, date, time, amount, desc) {
+function txHash(bank, date, time, amount, desc, authCode) {
   const norm = (desc || '').toUpperCase().replace(/\s+/g, ' ').trim().substring(0, 40);
-  const str = `${bank}_${date}_${time}_${amount}_${norm}`;
+  const str = `${bank}_${date}_${time}_${amount}_${norm}` + (authCode ? `_${authCode}` : '');
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const c = str.charCodeAt(i);
@@ -146,6 +146,7 @@ function defaultState() {
   return {
     transactions: [],
     customRules: {},  // merchant -> category
+    incomeRules: [],  // keywords that mark incoming transfers as salary/income
     settings: { salaryDate: 25, theme: 'light', familyMode: false },
     files: [], // loaded file names
     trash: []  // soft-deleted transactions
@@ -156,6 +157,7 @@ function loadState() {
     const s = JSON.parse(localStorage.getItem(APP_KEY)) || defaultState();
     // Migration: ensure trash array exists
     if (!s.trash) s.trash = [];
+    if (!s.incomeRules) s.incomeRules = [];
     if (!s.smartPatterns) s.smartPatterns = [];
     if (!s.budgets) s.budgets = {};
     if (!s.goals) s.goals = [];
@@ -236,6 +238,189 @@ function loadState() {
       s.transactions = deduped;
       s._migrationHashV3 = true;
       if (rehashed > 0 || removed > 0) console.log(`[FinHelper] Migration v3: rehashed ${rehashed}, removed ${removed} duplicates`);
+    }
+
+    // Migration v4: clean descriptions (strip processing dates) + re-hash (FIX-1/FIX-2)
+    // Old descriptions included processing dates like "07.03.2026 KOPILKA KARTA-VKLAD"
+    // This caused different hashes when overlapping PDFs were uploaded → phantom duplicates
+    if (!s._migrationHashV4) {
+      let cleaned = 0;
+      for (const tx of s.transactions) {
+        // Clean description: strip leading processing date
+        if (tx.description) {
+          const oldDesc = tx.description;
+          const newDesc = oldDesc.replace(/^\d{2}\.\d{2}\.\d{4}\s+/, '');
+          if (newDesc !== oldDesc) {
+            tx.description = newDesc;
+            if (tx.merchant === oldDesc || !tx.merchant) tx.merchant = newDesc;
+            cleaned++;
+          }
+        }
+        // Re-hash with cleaned desc (authCode empty for old transactions)
+        const bankPrefix = tx.bank === 'Сбербанк' ? 'sber' : tx.bank === 'Тинькофф' ? 'tink' : 'csv';
+        const dateStr = tx.date ? tx.date.split('-').reverse().join('.') : '';
+        const amountStr = tx.amount ? tx.amount.toString() : '';
+        const newHash = txHash(bankPrefix, dateStr, tx.time || '', amountStr, tx.description || '', tx.authCode || '');
+        const newId = bankPrefix + '_' + dateStr + '_' + (tx.time || '') + '_' + newHash;
+        if (newId !== tx.id) {
+          tx._oldIdV3 = tx.id;
+          tx.id = newId;
+          cleaned++;
+        }
+      }
+      // Deduplicate after re-hashing
+      const seen = new Set();
+      const deduped = [];
+      for (const tx of s.transactions) {
+        if (!seen.has(tx.id)) {
+          seen.add(tx.id);
+          deduped.push(tx);
+        }
+      }
+      const removed = s.transactions.length - deduped.length;
+      s.transactions = deduped;
+      s._migrationHashV4 = true;
+      if (cleaned > 0 || removed > 0) console.log(`[FinHelper] Migration v4: cleaned ${cleaned}, removed ${removed} duplicates`);
+    }
+
+    // Migration v5: re-classify BRANCH KARTA-CREDIT as 'Перевод себе' (FIX-3)
+    if (!s._migrationTransferV5) {
+      let fixed = 0;
+      for (const tx of s.transactions) {
+        if (tx.category !== 'Перевод себе') {
+          const upper = (tx.description || '').toUpperCase();
+          if (upper.includes('KARTA-CREDIT') || upper.includes('KARTA CREDIT') ||
+              upper.includes('BRANCH KARTA-CREDIT') || upper.includes('BRANCH KARTA CREDIT') ||
+              upper.includes('ПОГАШЕНИЕ КРЕДИТА') || upper.includes('ПОГАШЕНИЕ КРЕДИТНОЙ')) {
+            tx.category = 'Перевод себе';
+            tx.type = 'transfer';
+            fixed++;
+          }
+        }
+      }
+      s._migrationTransferV5 = true;
+      if (fixed > 0) console.log(`[FinHelper] Migration v5: reclassified ${fixed} KARTA-CREDIT transactions`);
+    }
+
+    // Migration v6: remove paired duplicate transfers (FIX-6)
+    // Same authCode+date+time+amount = bank reported one operation as two lines
+    if (!s._migrationPairedDedupV6) {
+      const byAuthKey = new Map();
+      for (const tx of s.transactions) {
+        if (!tx.authCode || tx.authCode === '000000') continue;
+        const key = tx.authCode + '|' + tx.date + '|' + tx.time + '|' + tx.amount;
+        if (!byAuthKey.has(key)) byAuthKey.set(key, []);
+        byAuthKey.get(key).push(tx);
+      }
+      const removeIds = new Set();
+      for (const [key, group] of byAuthKey) {
+        if (group.length < 2) continue;
+        let best = group[0];
+        for (let k = 1; k < group.length; k++) {
+          const curr = group[k];
+          const bestDesc = (best.description || '').toUpperCase();
+          const currDesc = (curr.description || '').toUpperCase();
+          const bestHuman = /^ПЕРЕВОД (ДЛЯ|ОТ) /.test(bestDesc);
+          const currHuman = /^ПЕРЕВОД (ДЛЯ|ОТ) /.test(currDesc);
+          if (currHuman && !bestHuman) best = curr;
+          else if (!currHuman && !bestHuman && currDesc.length > bestDesc.length) best = curr;
+        }
+        for (const tx of group) {
+          if (tx !== best) removeIds.add(tx.id);
+        }
+      }
+      if (removeIds.size > 0) {
+        s.transactions = s.transactions.filter(tx => !removeIds.has(tx.id));
+        console.log(`[FinHelper] Migration v6: removed ${removeIds.size} paired duplicate transfers`);
+      }
+      s._migrationPairedDedupV6 = true;
+    }
+
+    // Migration v7: re-categorize with improved MERCHANT_RULES (FIX-7)
+    // Only re-categorize transactions that are still 'Прочее' and haven't been manually changed
+    if (!s._migrationRecatV7) {
+      let recat = 0;
+      for (const tx of s.transactions) {
+        if (tx.category !== 'Прочее') continue;
+        if (tx._userEdited) continue; // don't touch manually categorized
+        const newCat = categorizeTransaction(tx.description, tx.bankCategory);
+        if (newCat !== 'Прочее') {
+          tx.category = newCat;
+          // Update type if needed
+          if (newCat === 'Наличные расход') tx.type = 'expense';
+          if (newCat === 'Перевод себе') tx.type = 'transfer';
+          recat++;
+        }
+      }
+      s._migrationRecatV7 = true;
+      if (recat > 0) console.log(`[FinHelper] Migration v7: re-categorized ${recat} transactions from Прочее`);
+    }
+
+    // Migration v8: apply incomeRules to reclassify incoming transfers as 'Зарплата' (FIX-8)
+    if (!s._migrationSalaryV8 && s.incomeRules && s.incomeRules.length > 0) {
+      let fixed = 0;
+      for (const tx of s.transactions) {
+        if (tx._userEdited) continue;
+        if (tx.type === 'expense') continue;
+        const upper = (tx.description || '').toUpperCase();
+        const isOutgoing = upper.includes('ПЕРЕВОД ДЛЯ') || upper.includes('ПЕРЕВОД НА ');
+        if (isOutgoing) continue;
+        for (const rule of s.incomeRules) {
+          if (upper.includes(rule.toUpperCase()) && tx.category !== 'Зарплата') {
+            tx.category = 'Зарплата';
+            tx.type = 'income';
+            fixed++;
+            break;
+          }
+        }
+      }
+      s._migrationSalaryV8 = true;
+      if (fixed > 0) console.log(`[FinHelper] Migration v8: reclassified ${fixed} transfers as Зарплата`);
+    }
+
+    // Migration v9: ATM income → transfer (FIX-9)
+    if (!s._migrationAtmV9) {
+      let fixed = 0;
+      for (const tx of s.transactions) {
+        if (tx.type !== 'income') continue;
+        const upper = (tx.description || '').toUpperCase();
+        if (upper.includes('ATM ') || upper.includes('ATM_') || upper.includes('БАНКОМАТ') || upper.includes('CASH WITHDRAWAL') || upper.includes('СНЯТИЕ НАЛИЧНЫХ')) {
+          tx.type = 'transfer';
+          tx.category = 'Перевод себе';
+          fixed++;
+        }
+      }
+      s._migrationAtmV9 = true;
+      if (fixed > 0) console.log(`[FinHelper] Migration v9: reclassified ${fixed} ATM income as transfers`);
+    }
+
+    // Migration v10: fix type for transfer categories (12.7M false expenses)
+    if (!s._migrationTransferTypeV10) {
+      let fixed = 0;
+      const transferCats = new Set(['Перевод себе', 'Переводы']);
+      for (const tx of s.transactions) {
+        if (transferCats.has(tx.category) && tx.type === 'expense') {
+          tx.type = 'transfer';
+          fixed++;
+        }
+      }
+      s._migrationTransferTypeV10 = true;
+      if (fixed > 0) console.log(`[FinHelper] Migration v10: fixed ${fixed} transfer types`);
+    }
+
+    // Migration v11: re-categorize «Прочее» with new merchant rules + business contacts
+    if (!s._migrationRecatV11) {
+      let fixed = 0;
+      for (const tx of s.transactions) {
+        if (tx.category !== 'Прочее' || tx._userEdited) continue;
+        const newCat = categorizeTransaction(tx.description, tx.bankCategory);
+        if (newCat && newCat !== 'Прочее') {
+          tx.category = newCat;
+          fixed++;
+        }
+      }
+      s._migrationRecatV11 = true;
+      if (fixed > 0) console.log(`[FinHelper] Migration v11: re-categorized ${fixed} transactions from Прочее`);
     }
 
     return s;
@@ -326,6 +511,7 @@ const CATEGORIES = {
   'Долг возврат': { emoji: '💰', color: '#00B894' },
   'Наличные расход': { emoji: '💵', color: '#E17055' },
   'Наличные доход': { emoji: '💵', color: '#00B894' },
+  'Зарплата': { emoji: '💼', color: '#00B894' },
   'Перевод себе': { emoji: '🔄', color: '#74B9FF' },
   'Дом': { emoji: '🏡', color: '#636E72' },
   'Животные': { emoji: '🐾', color: '#FAB1A0' },
@@ -607,6 +793,64 @@ const MERCHANT_RULES = [
   { patterns: ['РОСГОССТРАХ','ROSGOSSTRAH','ТИНЬКОФФ СТРАХОВ'], cat: 'Страхование' },
   { patterns: ['МЕГАФОН БАНК','TELE2 BANK'], cat: 'Подписки и связь' },
   { patterns: ['DOMCLICK','ДОМКЛИК','ЦИАН','CIAN','ЯНДЕКС НЕДВИЖИМ'], cat: 'Жильё' },
+
+  // --- Наличные (ATM снятия) ---
+  { patterns: ['ATM ','БАНКОМАТ','CASH WITHDRAWAL','СНЯТИЕ НАЛИЧНЫХ','ATM_'], cat: 'Наличные расход' },
+
+  // --- Автомобиль (доп.) ---
+  { patterns: ['АВТОПЛАТЁЖ ТАЧКА','АВТОПЛАТЕЖ ТАЧКА','ТАЧКА'], cat: 'Автомобиль' },
+  { patterns: ['TVEL-SPORT','ТВЕЛ-СПОРТ'], cat: 'Автомобиль' },
+
+  // --- Еда вне дома (доп. из выписок) ---
+  { patterns: ['UZHINDOMA','УЖИНДОМА','УЖИН ДОМА'], cat: 'Еда вне дома' },
+  { patterns: ['CHEFMARKET','ШЕФ МАРКЕТ','ШЕФМАРКЕТ'], cat: 'Еда вне дома' },
+
+  // --- Финансы / Инвестиции ---
+  { patterns: ['СБЕРНПФ','НПФ','ПЕНСИОНН','NPF'], cat: 'Перевод себе' },
+  { patterns: ['SBERBANK_ONL@IN VKLAD','VKLAD-KAR'], cat: 'Перевод себе' },
+
+  // --- Кабинет жителя / Дом ---
+  { patterns: ['KABINET-ZHITELYA','КАБИНЕТ ЖИТЕЛЯ','КАБИНЕТ-ЖИТЕЛЯ'], cat: 'Коммуналка' },
+
+  // --- Доп. маркетплейсы ---
+  { patterns: ['DDX','ДДХ'], cat: 'Маркетплейсы' },
+  { patterns: ['FAST BOX','FASTBOX','ФАСТ БОКС'], cat: 'Маркетплейсы' },
+
+  // --- Дом (доп.) ---
+  { patterns: ['YAKOB-ART','ЯКОБ-АРТ','ЯКОБ АРТ'], cat: 'Дом' },
+  { patterns: ['TROYA-LYUKS','ТРОЯ-ЛЮКС','ТРОЯ ЛЮКС','TROYA LYUKS'], cat: 'Дом' },
+  { patterns: ['ARED SPB','АРЕД СПБ'], cat: 'Дом' },
+
+  // --- Здоровье (доп.) ---
+  { patterns: ['ЯКОБ-ДЕНТИК','YAKOB-DENT','ДЕНТИК'], cat: 'Здоровье' },
+
+  // --- Страхование (доп.) ---
+  { patterns: ['OSK-INS','ОСК-ИНС','YM*OSK'], cat: 'Страхование' },
+
+  // --- Прочие внутренние платежи Сбер ---
+  { patterns: ['МОМЕНТАЛЬНЫЕ ПЛАТЕЖИ','SBSCR_МОМЕНТ'], cat: 'Переводы' },
+  { patterns: ['BPWWW','ОПЛАТА УСЛУГ'], cat: 'Прочее' },
+
+  // --- Доп. по данным из выписок ---
+  { patterns: ['РЯДКОМ','RDKOM'], cat: 'Продукты' },
+
+  // --- Фаза 2: новые правила для уменьшения «Прочее» ---
+  { patterns: ['SBSCR_СЕРВИСЫ ЯНДЕКСА','SBSCR_СЕРВИСЫ','SBSCR_СЕРВИ'], cat: 'Подписки и связь' },
+  { patterns: ['ZHOLOBOV VADIM','ЖОЛОБОВ'], cat: 'Развлечения' },
+  { patterns: ['ULYBKA RADUGI','УЛЫБКА РАДУГИ'], cat: 'Дом' },
+  { patterns: ['GALAMART','ГАЛАМАРТ'], cat: 'Дом' },
+  { patterns: ['NOVOE KACHESTVO DOROG','НОВОЕ КАЧЕСТВО ДОРОГ'], cat: 'Автомобиль' },
+  { patterns: ['WHSD','ЗСД'], cat: 'Автомобиль' },
+  { patterns: ['DINOLAND','ДИНОЛЕНД'], cat: 'Дети' },
+  { patterns: ['YANDEX*SCOOTERS','YANDEX*7999*SCOOTER','ЯНДЕКС*САМОКАТ'], cat: 'Транспорт' },
+  { patterns: ['YANDEX*GO_BERIZARYAD','YANDEX*GO_RUNCHARGE','ЯНДЕКС*ЗАРЯДКА'], cat: 'Транспорт' },
+  { patterns: ['KOPIMURINO','KOPI TSENTR','КОПИ ЦЕНТР','КОПИМУРИНО'], cat: 'Дом' },
+  { patterns: ['BUKVOED','БУКВОЕД'], cat: 'Дети' },
+  { patterns: ['CDEK','СДЭК'], cat: 'Маркетплейсы' },
+  { patterns: ['SPB DEVYATKINO','ДЕВЯТКИНО'], cat: 'Транспорт' },
+  { patterns: ['IP FILIPPOV','ИП ФИЛИППОВ'], cat: 'Развлечения' },
+  { patterns: ['IP DAUD ALADKHAM','ИП ДАУД'], cat: 'Еда вне дома' },
+  { patterns: ['ПЕРЕВОД СРЕДСТВ ИП'], cat: 'Перевод себе' },
 ];
 
 function categorizeTransaction(desc, bankCat) {
@@ -615,6 +859,20 @@ function categorizeTransaction(desc, bankCat) {
   // 1. Custom user rules
   for (const [merchant, cat] of Object.entries(STATE.customRules)) {
     if (upper.includes(merchant.toUpperCase())) return cat;
+  }
+
+  // 1b. Business contacts auto-detect (salary payments to subcontractors)
+  const BUSINESS_CONTACTS = [
+    'ГАСАНАГА', 'М. ГАСАНАГА',
+    'К. АННА ВИКТОРОВНА', 'К. ЖАННА ВАСИЛЬЕВН',
+    'Н. АНЖЕЛИКА ИВАНОВ', 'П. ВИКТОР АНДРЕЕВИ',
+    'Н. ЕВГЕНИЙ ВИКТОРО', 'Ф. ОКСАНА НИКОЛАЕВ',
+    'Б. РАИСА',
+  ];
+  if (upper.includes('ПЕРЕВОД ДЛЯ') || upper.includes('ПЕРЕВОД')) {
+    for (const contact of BUSINESS_CONTACTS) {
+      if (upper.includes(contact.toUpperCase())) return 'Бизнес';
+    }
   }
 
   // 2. Merchant rules
@@ -730,18 +988,50 @@ function classifyTransferType(desc, bankCat, isIncome) {
   const upper = (desc || '').toUpperCase();
   const bankUpper = (bankCat || '').toUpperCase();
 
+  // FIX-9: ATM operations are never income — they are cash withdrawals or deposits (self-transfer)
+  if (upper.includes('ATM ') || upper.includes('ATM_') || upper.includes('БАНКОМАТ') || upper.includes('CASH WITHDRAWAL') || upper.includes('СНЯТИЕ НАЛИЧНЫХ')) {
+    return { type: isIncome ? 'transfer' : 'expense', category: isIncome ? 'Перевод себе' : 'Наличные расход' };
+  }
+
+  // FIX-8: User-defined income rules (salary, etc.)
+  if (isIncome && STATE.incomeRules && STATE.incomeRules.length > 0) {
+    for (const rule of STATE.incomeRules) {
+      if (upper.includes(rule.toUpperCase())) {
+        return { type: 'income', category: 'Зарплата' };
+      }
+    }
+  }
+
   // Self-transfer patterns (between own accounts)
   const selfPatterns = [
-    'KOPILKA', 'КОПИЛКА',
+    'KOPILKA', 'КОПИЛКА', 'ИНВЕСТКОПИЛКА',
     'KARTA-VKLAD', 'KARTA VKLAD', 'КАРТА-ВКЛАД', 'КАРТА ВКЛАД',
+    'KARTA-CREDIT', 'KARTA CREDIT', 'КАРТА-КРЕДИТ', 'КАРТА КРЕДИТ',
+    'BRANCH KARTA-CREDIT', 'BRANCH KARTA CREDIT',
     'ПОПОЛНЕНИЕ ВКЛАДА', 'ПОПОЛНЕНИЕ СЧЁТА', 'ПОПОЛНЕНИЕ СЧЕТА',
+    'ПОПОЛНЕНИЕ. СИСТЕМА БЫСТРЫХ ПЛ',
     'ПЕРЕВОД МЕЖДУ СЧЕТАМИ', 'МЕЖДУ СВОИМИ СЧЕТАМИ', 'МЕЖДУ СВОИМИ',
     'НАКОПИТЕЛЬНЫЙ СЧЁТ', 'НАКОПИТЕЛЬНЫЙ СЧЕТ', 'НАКОПИТЕЛЬН',
     'СБЕРЕГАТЕЛЬНЫЙ СЧЁТ', 'СБЕРЕГАТЕЛЬНЫЙ СЧЕТ',
     'ПЕРЕВОД НА ВКЛАД', 'ПЕРЕВОД СО ВКЛАДА',
     'СО ВКЛАДА', 'НА ВКЛАД',
     'ВНУТРИБАНКОВСКИЙ ПЕРЕВОД', 'ВНУТРЕННИЙ ПЕРЕВОД',
+    'ПОГАШЕНИЕ КРЕДИТА', 'ПОГАШЕНИЕ КРЕДИТНОЙ',
+    'ПЕРЕВОД СОБСТВЕННЫХ СРЕДСТВ', 'ПРОЧИЕ ВЫПЛАТЫ',
+    'ВНЕШНИЙ ПЕРЕВОД ПО НОМЕРУ ТЕЛЕ',
+    'ПЕРЕВОД СРЕДСТВ ИП НА ЛИЧНЫЙ СЧЕТ',
   ];
+
+  // Wife transfers (Алёна Скачкова) — always transfer
+  const wifePatterns = ['АЛЁНА СЕРГЕЕВНА', 'АЛЕНА СЕРГЕЕВНА', 'С. АЛЁНА', 'С. АЛЕНА', 'СКАЧКОВА А'];
+  for (const pat of wifePatterns) {
+    if (upper.includes(pat)) return { type: 'transfer', category: 'Переводы' };
+  }
+
+  // ИП → personal account transfer
+  if (upper.includes('ПЕРЕВОД ОТ С. КИРИЛЛ ВЛАДИМИРО') || upper.includes('ПЕРЕВОД ОТ СКАЧКОВ К')) {
+    return { type: 'transfer', category: 'Перевод себе' };
+  }
 
   for (const pat of selfPatterns) {
     if (upper.includes(pat)) return { type: 'transfer', category: 'Перевод себе' };
@@ -864,7 +1154,7 @@ function parseSber(text) {
   // MODE D (debit, split cells): "31.01.2026 21:13 734687" / category / amount / balance / date2 / description
   // MODE E (full-line fallback): "27.02.2026 14:31 444516 Перевод СБП 1 125,00 124,09" (all on one line)
 
-  const dateTimeAuthCatRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})\s+\d{6}\s+(.+)$/;
+  const dateTimeAuthCatRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})\s+(\d{6})\s+(.+)$/;
   const dateTimeAuthOnlyRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})\s+(\d{6})$/;
   const dateTimeRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})$/;
   const dateRe = /^\d{2}\.\d{2}\.\d{4}$/;
@@ -885,6 +1175,7 @@ function parseSber(text) {
 
   for (let i = 0; i < lines.length - 2; i++) {
     let date, time, category, amountLine, balanceLine, descStart;
+    let authCode = '';
 
     // MODE C: "27.02.2026 14:31 444516 Перевод СБП" / amount / balance / date2 / description
     // MODE E fallback: same regex but amounts embedded in category capture
@@ -892,7 +1183,8 @@ function parseSber(text) {
     if (dtacMatch) {
       date = dtacMatch[1];
       time = dtacMatch[2];
-      const catRaw = dtacMatch[3];
+      authCode = dtacMatch[3];
+      const catRaw = dtacMatch[4];
       if (i + 2 < lines.length && amountRe.test(lines[i + 1]) && amountRe.test(lines[i + 2])) {
         // MODE C: amounts on next lines
         category = catRaw;
@@ -917,6 +1209,7 @@ function parseSber(text) {
       if (dtaMatch) {
         date = dtaMatch[1];
         time = dtaMatch[2];
+        authCode = dtaMatch[3];
         if (i + 3 >= lines.length) continue;
         category = lines[i + 1];
         if (dateRe.test(category) || amountRe.test(category) || dateTimeRe.test(category) ||
@@ -946,6 +1239,7 @@ function parseSber(text) {
 
         if (authRe.test(lines[nextIdx])) {
           // DEBIT: authcode → category → amount → balance
+          authCode = lines[nextIdx];
           if (nextIdx + 3 >= lines.length) continue;
           category = lines[nextIdx + 1];
           if (dateRe.test(category) || amountRe.test(category) || dateTimeRe.test(category)) continue;
@@ -969,25 +1263,35 @@ function parseSber(text) {
     const amountStr = amountLine.replace(/\s/g, '').replace(',', '.');
     const balanceStr = balanceLine.replace(/\s/g, '').replace(',', '.');
 
-    // Collect description, skipping date2+authcode
+    // Collect description, skipping date2+authcode, extracting authCode if not yet set
     let desc = '';
     let j = descStart;
     // Skip merged date2+authcode: "25.01.2026 060393"
     if (j < lines.length && dateAuthRe.test(lines[j])) {
+      if (!authCode) {
+        const daMatch = lines[j].match(/^\d{2}\.\d{2}\.\d{4}\s+(\d{6})$/);
+        if (daMatch) authCode = daMatch[1];
+      }
       j++;
     } else {
       // Or skip separate date2 and authcode
       if (j < lines.length && dateRe.test(lines[j])) j++;
-      if (j < lines.length && authRe.test(lines[j])) j++;
+      if (j < lines.length && authRe.test(lines[j])) {
+        if (!authCode) authCode = lines[j];
+        j++;
+      }
     }
     // Collect until next transaction or page marker
+    // FIX-1: Strip leading processing dates from description lines
     while (j < lines.length) {
       const l = lines[j];
       if (isNewTxStart(j)) break;
       if (pageMarkerRe.test(l)) break;
       if (dateRe.test(l) || dateTimeRe.test(l) || dateAuthRe.test(l)) { j++; continue; }
       if (authRe.test(l)) { j++; continue; }
-      desc += (desc ? ' ' : '') + l;
+      // Strip leading processing date (e.g. "07.03.2026 KOPILKA KARTA-VKLAD" → "KOPILKA KARTA-VKLAD")
+      const cleaned = l.replace(/^\d{2}\.\d{2}\.\d{4}\s+/, '');
+      if (cleaned) desc += (desc ? ' ' : '') + cleaned;
       j++;
     }
 
@@ -1018,7 +1322,8 @@ function parseSber(text) {
     }
 
     transactions.push({
-      id: 'sber_' + date + '_' + time + '_' + txHash('sber', date, time, amountStr, desc),
+      id: 'sber_' + date + '_' + time + '_' + txHash('sber', date, time, amountStr, desc, authCode),
+      authCode: authCode || '',
       date: isoDate,
       time: time,
       monthKey: monthKey,
@@ -1033,6 +1338,42 @@ function parseSber(text) {
     });
 
     i = j - 1;
+  }
+
+  // FIX-6: Deduplicate paired transfers
+  // Sber reports some operations as two lines with same authCode+time+amount but different descriptions:
+  //   "SBOL перевод на карту 5469****7742 М. ГАСАНАГА..." (technical)
+  //   "Перевод для М. Гасанага Гюльоглан Оглы" (human-readable)
+  // Keep the more descriptive one (longer description or the "Перевод для/от" variant)
+  const byAuthKey = new Map();
+  for (const tx of transactions) {
+    if (!tx.authCode || tx.authCode === '000000') continue;
+    const key = tx.authCode + '|' + tx.date + '|' + tx.time + '|' + tx.amount;
+    if (!byAuthKey.has(key)) byAuthKey.set(key, []);
+    byAuthKey.get(key).push(tx);
+  }
+  const removeIds = new Set();
+  for (const [key, group] of byAuthKey) {
+    if (group.length < 2) continue;
+    // Keep the best description: prefer "Перевод для/от" human-readable, else longest
+    let best = group[0];
+    for (let k = 1; k < group.length; k++) {
+      const curr = group[k];
+      const bestDesc = (best.description || '').toUpperCase();
+      const currDesc = (curr.description || '').toUpperCase();
+      // Prefer human-readable "Перевод для/от" over SBOL technical
+      const bestHuman = /^ПЕРЕВОД (ДЛЯ|ОТ) /.test(bestDesc);
+      const currHuman = /^ПЕРЕВОД (ДЛЯ|ОТ) /.test(currDesc);
+      if (currHuman && !bestHuman) best = curr;
+      else if (!currHuman && !bestHuman && currDesc.length > bestDesc.length) best = curr;
+    }
+    for (const tx of group) {
+      if (tx !== best) removeIds.add(tx.id);
+    }
+  }
+  if (removeIds.size > 0) {
+    console.log(`[FinHelper] FIX-6: Removed ${removeIds.size} paired duplicate transfers`);
+    return transactions.filter(tx => !removeIds.has(tx.id));
   }
 
   return transactions;
@@ -1309,10 +1650,82 @@ async function handleFiles(files) {
     let unique = [];
     let dupeCount = 0;
     try {
-      // Merge, avoiding duplicates by id
+      // Merge, avoiding duplicates — smart dedup (FIX-2: handles authCode transition)
       const existingIds = new Set(STATE.transactions.map(t => t.id));
+
+      // Phase 1: exact ID match (fast path)
       unique = allNewTx.filter(t => !existingIds.has(t.id));
+
+      // Phase 2: semantic dedup for old↔new transition
+      // Old transactions without authCode get different hash than new ones with authCode
+      // Match by (bank, date, time, amount, normalizedDesc) and upgrade old entries
+      if (unique.length > 0) {
+        const existingByBaseKey = new Map();
+        for (const t of STATE.transactions) {
+          const norm = (t.description || '').toUpperCase().replace(/\s+/g, ' ').trim().substring(0, 40);
+          const key = `${t.bank}_${t.date}_${t.time}_${t.amount}_${norm}`;
+          if (!existingByBaseKey.has(key)) existingByBaseKey.set(key, []);
+          existingByBaseKey.get(key).push(t);
+        }
+
+        unique = unique.filter(newTx => {
+          const norm = (newTx.description || '').toUpperCase().replace(/\s+/g, ' ').trim().substring(0, 40);
+          const key = `${newTx.bank}_${newTx.date}_${newTx.time}_${newTx.amount}_${norm}`;
+          const matches = existingByBaseKey.get(key);
+          if (!matches || matches.length === 0) return true; // no match → new transaction
+
+          // Check if any existing entry is the same transaction (upgrade scenario)
+          for (const m of matches) {
+            // Both have authCode and they match → duplicate
+            if (m.authCode && newTx.authCode && m.authCode === newTx.authCode) return false;
+            // Existing has no authCode → old version, upgrade it
+            if (!m.authCode && newTx.authCode) {
+              m.authCode = newTx.authCode;
+              m.id = newTx.id;
+              existingIds.add(newTx.id);
+              return false;
+            }
+            // Neither has authCode → duplicate
+            if (!m.authCode && !newTx.authCode) return false;
+          }
+          // All existing have different authCodes → legitimate different transaction
+          return true;
+        });
+      }
+
       STATE.transactions = STATE.transactions.concat(unique);
+
+      // FIX-6 cross-file: deduplicate paired transfers across all loaded transactions
+      // Same authCode+date+time+amount from different files = same operation reported twice
+      const byAuthKey = new Map();
+      for (const tx of STATE.transactions) {
+        if (!tx.authCode || tx.authCode === '000000') continue;
+        const key = tx.authCode + '|' + tx.date + '|' + tx.time + '|' + tx.amount;
+        if (!byAuthKey.has(key)) byAuthKey.set(key, []);
+        byAuthKey.get(key).push(tx);
+      }
+      const pairedRemoveIds = new Set();
+      for (const [key, group] of byAuthKey) {
+        if (group.length < 2) continue;
+        let best = group[0];
+        for (let k = 1; k < group.length; k++) {
+          const curr = group[k];
+          const bestD = (best.description || '').toUpperCase();
+          const currD = (curr.description || '').toUpperCase();
+          const bestH = /^ПЕРЕВОД (ДЛЯ|ОТ) /.test(bestD);
+          const currH = /^ПЕРЕВОД (ДЛЯ|ОТ) /.test(currD);
+          if (currH && !bestH) best = curr;
+          else if (!currH && !bestH && currD.length > bestD.length) best = curr;
+        }
+        for (const tx of group) {
+          if (tx !== best) pairedRemoveIds.add(tx.id);
+        }
+      }
+      if (pairedRemoveIds.size > 0) {
+        STATE.transactions = STATE.transactions.filter(tx => !pairedRemoveIds.has(tx.id));
+        console.log(`[FinHelper] FIX-6: Removed ${pairedRemoveIds.size} cross-file paired duplicates`);
+      }
+
       STATE.transactions.sort((a, b) => {
         const da = a.date || ''; const db = b.date || '';
         return db.localeCompare(da) || (b.time || '').localeCompare(a.time || '');
@@ -1944,6 +2357,7 @@ function renderDashboard() {
   try { updateGamification(); } catch(e) { console.error('[FinHelper] updateGamification error:', e); }
 
   // Rank badge next to month name + period label
+  if (!STATE.gamification) STATE.gamification = { rank: 'newbie', badges: [], monthHistory: {} };
   const rankInfo = getRankInfo(STATE.gamification.rank);
   document.getElementById('month-name').innerHTML = getPeriodLabel() +
     ' <span class="rank-badge" onclick="event.stopPropagation();showAchievements()" title="' + rankInfo.label + '">' + rankInfo.icon + '</span>';
@@ -1972,6 +2386,15 @@ function renderDashboard() {
   // Show transfers sum if filter is 'all'
   if (dashFilter === 'all' && transfers > 0) {
     document.getElementById('total-expense').title = `+ ${formatMoney(transfers)} переводов`;
+  }
+
+  // Subtitle note about what's excluded
+  const exclNote = document.getElementById('dash-excl-note');
+  if (exclNote) {
+    const exclCats = (STATE.settings.dashExclude || []);
+    const parts = ['переводов'];
+    parts.push(...exclCats.map(c => c.toLowerCase()));
+    exclNote.textContent = `Семейные расходы · без ${parts.join(', ')}`;
   }
 
   // Calculate trends (3-month average comparison) — only in month mode
@@ -2070,7 +2493,8 @@ function renderForecast(data, income, expenses, totalTrends) {
       let trendHtml = '';
 
       if (isCurrentMonth && daysPassed > 0) {
-        // Show projected vs average
+        // Show projected vs average with formula
+        trendHtml += `<div style="color:var(--text-muted);font-size:0.78rem;margin-bottom:4px;">📐 ${formatMoney(expenses)} ÷ ${daysPassed} дн. = ${formatMoney(Math.round(avgDailySpend))}/день × ${daysInMonth} дн.</div>`;
         trendHtml += `<div style="color:var(--text-muted);">📈 Прогноз к концу месяца: <b>${formatMoney(Math.round(projectedTotal))}</b></div>`;
         trendHtml += `<div style="color:var(--text-muted);">📊 Обычно вы тратите: <b>${formatMoney(avgExp)}</b></div>`;
         const diff = Math.round(projectedTotal) - avgExp;
@@ -2778,6 +3202,9 @@ function formatTxDate(tx) {
 
 function renderTxItem(tx) {
   const info = CATEGORIES[tx.category] || { emoji: '❓' };
+  // Special emoji for KOPILKA auto-savings (FIX-4)
+  const isKopilka = /KOPILKA|КОПИЛКА/i.test(tx.description || '');
+  const emoji = isKopilka ? '🐷' : info.emoji;
   const colorClass = tx.type === 'income' ? 'amount-income' : (tx.type === 'transfer' ? '' : 'amount-expense');
   const sign = tx.type === 'income' ? '+' : (tx.type === 'transfer' ? '' : '-');
   const commentBadge = tx.comment ? ' · 💬' : '';
@@ -2786,17 +3213,53 @@ function renderTxItem(tx) {
   const escapedId = tx.id.replace(/'/g, "\\'");
   const dateStr = formatTxDate(tx);
   return '<div class="tx-item" data-txid="' + tx.id.replace(/"/g, '&quot;') + '" onclick="openRecat(\'' + escapedId + '\')">'
-    + '<div class="tx-emoji">' + info.emoji + '</div>'
+    + '<div class="tx-emoji">' + emoji + '</div>'
     + '<div class="tx-info">'
     + '<div class="tx-desc">' + manualBadge + cleanDescription(tx.description) + '</div>'
     + '<div class="tx-cat">' + tx.category + ' · ' + (tx.bank || '') + commentBadge + selfBadge + '</div>'
     + (tx.comment ? '<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">💬 ' + tx.comment + '</div>' : '')
     + '</div>'
-    + '<div style="text-align:right;min-width:fit-content;">'
+    + '<div style="text-align:right;min-width:fit-content;display:flex;align-items:center;gap:6px;">'
+    + '<div>'
     + '<div class="tx-amount ' + colorClass + '" style="margin-bottom:2px;">' + sign + formatMoney(tx.amount) + '</div>'
     + '<div style="font-size:0.65rem;color:var(--text-muted);white-space:nowrap;">' + dateStr + '</div>'
     + '</div>'
+    + (tx.type !== 'excluded' ? '<div class="tx-exclude-btn" onclick="excludeTransaction(\'' + escapedId + '\')" title="Исключить из расходов" style="font-size:0.75rem;color:var(--text-muted);cursor:pointer;padding:4px;">✕</div>' : '')
+    + '</div>'
     + '</div>';
+}
+
+let lastExcludedTx = null;
+
+function excludeTransaction(txId) {
+  event.stopPropagation();
+  const tx = STATE.transactions.find(t => t.id === txId);
+  if (!tx) return;
+  tx._prevType = tx.type;
+  tx.type = 'excluded';
+  lastExcludedTx = tx;
+  saveState();
+  renderTransactions();
+  renderDashboard();
+  // Show undo toast
+  if (undoTimer) clearTimeout(undoTimer);
+  const t = document.getElementById('toast');
+  t.innerHTML = `Исключено: ${cleanDescription(tx.description).substring(0, 25)} <button onclick="undoExclude()" style="margin-left:8px;padding:4px 12px;border-radius:8px;background:var(--accent);color:white;border:none;font-weight:600;cursor:pointer;">Отменить</button>`;
+  t.classList.add('show');
+  undoTimer = setTimeout(() => { t.classList.remove('show'); lastExcludedTx = null; }, 6000);
+}
+
+function undoExclude() {
+  if (!lastExcludedTx) return;
+  lastExcludedTx.type = lastExcludedTx._prevType || 'expense';
+  delete lastExcludedTx._prevType;
+  lastExcludedTx = null;
+  saveState();
+  renderTransactions();
+  renderDashboard();
+  const t = document.getElementById('toast');
+  t.classList.remove('show');
+  if (undoTimer) clearTimeout(undoTimer);
 }
 
 function toggleTxSort() {
@@ -3333,8 +3796,7 @@ function getDebts() {
 // ============================================================
 function openIncomeDetail() {
   const allData = getMonthData(currentMonth);
-  const data = applyDashFilter(allData);
-  const incomeTxs = data.filter(t => t.type === 'income');
+  const incomeTxs = allData.filter(t => t.type === 'income');
   const totalIncome = incomeTxs.reduce((s, t) => s + t.amount, 0);
 
   if (incomeTxs.length === 0) {
@@ -3342,40 +3804,36 @@ function openIncomeDetail() {
     return;
   }
 
-  // Group by source/description
-  const bySource = {};
-  for (const tx of incomeTxs) {
-    const key = tx.description.substring(0, 40) || 'Прочее';
-    if (!bySource[key]) bySource[key] = { amount: 0, count: 0, cat: tx.category };
-    bySource[key].amount += tx.amount;
-    bySource[key].count++;
-  }
-
-  // Sort by amount desc
-  const sorted = Object.entries(bySource).sort((a, b) => b[1].amount - a[1].amount);
+  // Sort by date desc
+  const sorted = [...incomeTxs].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
   let html = `<div class="detail-section">
-    <h4>Источники дохода</h4>`;
+    <h4>Источники дохода · ${formatMoney(totalIncome)}</h4>`;
 
-  for (const [source, info] of sorted) {
-    const pct = totalIncome > 0 ? Math.round(info.amount / totalIncome * 100) : 0;
-    const emoji = (CATEGORIES[info.cat] || {}).emoji || '💰';
+  for (const tx of sorted) {
+    const emoji = (CATEGORIES[tx.category] || {}).emoji || '💰';
+    const desc = (tx.description || 'Прочее').substring(0, 50);
+    const dateStr = tx.date ? tx.date.split('-').reverse().join('.') : '';
+    const escapedId = tx.id.replace(/'/g, "\\'");
     html += `
-      <div class="detail-row">
-        <div class="dl">
+      <div class="detail-row" style="flex-wrap:wrap;">
+        <div class="dl" style="flex:1;min-width:0;">
           <div class="dl-emoji">${emoji}</div>
-          <div>
-            <div class="dl-text">${source}</div>
-            <div class="dl-sub">${info.count} операций</div>
+          <div style="min-width:0;">
+            <div class="dl-text" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${desc}</div>
+            <div class="dl-sub">${dateStr} · ${tx.category}</div>
           </div>
         </div>
-        <div class="dr">
-          <div class="dr-amount amount-income">+${formatMoney(info.amount)}</div>
-          <div class="dr-pct">${pct}%</div>
+        <div class="dr" style="display:flex;align-items:center;gap:6px;">
+          <div class="dr-amount amount-income">+${formatMoney(tx.amount)}</div>
+          <button onclick="reclassifyIncomeTx('${escapedId}')" style="background:none;border:1px solid var(--border);border-radius:6px;padding:2px 6px;cursor:pointer;font-size:0.7rem;color:var(--text-muted);" title="Это не доход">✕</button>
         </div>
       </div>`;
   }
-  html += `</div>`;
+  html += `</div>
+  <div style="margin-top:8px;padding:8px 12px;background:rgba(0,0,0,0.03);border-radius:8px;font-size:0.75rem;color:var(--text-muted);">
+    💡 Нажмите ✕ чтобы убрать операцию из доходов → Перевод себе
+  </div>`;
 
   // Compare to previous month
   const prevMonth = getPrevMonth(currentMonth);
@@ -3402,6 +3860,17 @@ function openIncomeDetail() {
   }
 
   showDetailModal('💰 Доходы · ' + monthName(currentMonth), html);
+}
+
+function reclassifyIncomeTx(txId) {
+  const tx = STATE.transactions.find(t => t.id === txId);
+  if (!tx) return;
+  tx.type = 'transfer';
+  tx.category = 'Перевод себе';
+  saveState();
+  toast('→ Перевод себе');
+  closeDetailModal();
+  renderDashboard();
 }
 
 function openExpenseDetail() {
@@ -3455,7 +3924,7 @@ function openExpenseDetail() {
         <div class="dl">
           <div class="dl-emoji">${emoji}</div>
           <div>
-            <div class="dl-text">${tx.description.substring(0, 35)}</div>
+            <div class="dl-text">${cleanDescription(tx.description)}</div>
             <div class="dl-sub">${tx.date} · ${tx.category}</div>
           </div>
         </div>
@@ -3492,6 +3961,26 @@ function openExpenseDetail() {
     const topCat = sorted[0];
     html += `<div class="detail-tip">
       <span class="tip-emoji">💡</span> <b>Где сэкономить?</b> Категория «${topCat[0]}» — ${Math.round(topCat[1].amount / totalExpense * 100)}% всех расходов (${formatMoney(topCat[1].amount)}). Попробуй сократить на 10% — сэкономишь ${formatMoney(topCat[1].amount * 0.1)} в месяц.
+    </div>`;
+  }
+
+  // Show excluded totals (transfers, business, etc.)
+  const excludedCats = STATE.settings.dashExclude || [];
+  const allMonthData = getMonthData(currentMonth);
+  const transfersTotal = allMonthData.filter(t => t.type === 'transfer').reduce((s, t) => s + t.amount, 0);
+  const excludedByFilter = allMonthData.filter(t => t.type === 'expense' && excludedCats.includes(t.category));
+  const excludedMap = {};
+  for (const tx of excludedByFilter) {
+    excludedMap[tx.category] = (excludedMap[tx.category] || 0) + tx.amount;
+  }
+  let exclParts = [];
+  if (transfersTotal > 0) exclParts.push(`Переводы ${formatMoney(transfersTotal)}`);
+  for (const [cat, amt] of Object.entries(excludedMap).sort((a, b) => b[1] - a[1])) {
+    exclParts.push(`${cat} ${formatMoney(amt)}`);
+  }
+  if (exclParts.length > 0) {
+    html += `<div class="detail-tip" style="opacity:0.7;">
+      <span class="tip-emoji">🚫</span> <b>Исключено:</b> ${exclParts.join(', ')}
     </div>`;
   }
 
@@ -3789,10 +4278,22 @@ function showWowScreen(newTx, uniqueCount, dupeCount) {
     html += '</div>';
   }
 
-  // "Прочее" notice
+  // Type breakdown (how many expenses, transfers, business)
+  const expCount = newTx.filter(t => t.type === 'expense').length;
+  const trfCount = newTx.filter(t => t.type === 'transfer').length;
+  const bizCount = newTx.filter(t => t.category === 'Бизнес').length;
+  html += '<div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:12px;text-align:center;">'
+    + expCount + ' расход' + pluralize(expCount, '', 'а', 'ов')
+    + ', ' + trfCount + ' перевод' + pluralize(trfCount, '', 'а', 'ов')
+    + (bizCount > 0 ? ', ' + bizCount + ' бизнес' : '')
+    + '</div>';
+
+  // "Прочее" notice with button
+  const miscPct = expenses > 0 ? Math.round(miscCount / expCount * 100) : 0;
   if (miscCount > 0) {
     html += '<div style="background:rgba(255,193,7,0.12);border-radius:10px;padding:10px 12px;font-size:0.85rem;">'
-      + '❓ <b>Нужно разобрать:</b> ' + miscCount + ' операц' + pluralize(miscCount, 'ия', 'ии', 'ий') + ' в «Прочее»'
+      + '❓ <b>Нужно разобрать:</b> ' + miscCount + ' операц' + pluralize(miscCount, 'ия', 'ии', 'ий') + ' в «Прочее» (' + miscPct + '%)'
+      + (miscPct >= 20 ? '<br><button onclick="closeModal(\'modal-wow\');showScreen(\'transactions\');setCatFilter(\'Прочее\')" style="margin-top:8px;padding:6px 14px;border-radius:8px;background:var(--accent);color:white;border:none;font-size:0.82rem;font-weight:600;cursor:pointer;">Разобрать Прочее</button>' : '')
       + '</div>';
   }
 
@@ -4054,6 +4555,75 @@ function renderSettings() {
     ? STATE.files.map(f => `<div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:0.9rem;">📄 ${f}</div>`).join('')
     : '<div class="empty-state"><p>Нет загруженных файлов</p></div>';
   document.getElementById('loaded-files').innerHTML = filesHtml;
+  renderIncomeRules();
+}
+
+function renderIncomeRules() {
+  const container = document.getElementById('income-rules-list');
+  if (!container) return;
+  const rules = STATE.incomeRules || [];
+  if (rules.length === 0) {
+    container.innerHTML = '<div style="padding:8px 0;font-size:0.85rem;color:var(--text-muted);">Нет правил. Входящие переводы считаются переводами, а не доходом.</div>';
+    return;
+  }
+  container.innerHTML = rules.map((r, i) => `
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">
+      <span style="font-size:0.9rem;">💼 ${r}</span>
+      <button onclick="removeIncomeRule(${i})" style="background:none;border:none;cursor:pointer;font-size:1rem;color:var(--text-muted);">✕</button>
+    </div>`).join('');
+}
+
+function addIncomeRule() {
+  const input = document.getElementById('income-rule-input');
+  const val = (input.value || '').trim();
+  if (!val) return;
+  if (!STATE.incomeRules) STATE.incomeRules = [];
+  if (STATE.incomeRules.some(r => r.toUpperCase() === val.toUpperCase())) {
+    toast('Такое правило уже есть');
+    return;
+  }
+  STATE.incomeRules.push(val);
+  input.value = '';
+  // Re-classify matching incoming transactions
+  let fixed = 0;
+  const valUp = val.toUpperCase();
+  for (const tx of STATE.transactions) {
+    if (tx._userEdited) continue;
+    if (tx.type === 'expense') continue;
+    const upper = (tx.description || '').toUpperCase();
+    if (!upper.includes(valUp)) continue;
+    // Only incoming: "ПЕРЕВОД ОТ" or non-"ПЕРЕВОД ДЛЯ" transfers
+    const isOutgoing = upper.includes('ПЕРЕВОД ДЛЯ') || upper.includes('ПЕРЕВОД НА ');
+    if (isOutgoing) continue;
+    if (tx.category !== 'Зарплата') {
+      tx.category = 'Зарплата';
+      tx.type = 'income';
+      fixed++;
+    }
+  }
+  saveState();
+  renderIncomeRules();
+  if (fixed > 0) toast(`${fixed} операций → Зарплата`);
+  else toast('Правило добавлено');
+}
+
+function removeIncomeRule(idx) {
+  const removed = STATE.incomeRules.splice(idx, 1)[0];
+  // Revert matching transactions back to transfer
+  if (removed) {
+    for (const tx of STATE.transactions) {
+      if (tx._userEdited) continue;
+      if (tx.category !== 'Зарплата') continue;
+      const upper = (tx.description || '').toUpperCase();
+      if (upper.includes(removed.toUpperCase())) {
+        tx.type = 'transfer';
+        tx.category = 'Переводы';
+      }
+    }
+  }
+  saveState();
+  renderIncomeRules();
+  toast('Правило удалено');
 }
 
 function renderDebtsSection() {
