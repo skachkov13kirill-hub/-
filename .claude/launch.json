@@ -4,7 +4,7 @@
     {
       "name": "finance-helper",
       "runtimeExecutable": "/usr/bin/python3",
-      "runtimeArgs": ["/tmp/serve_finance.py"],
+      "runtimeArgs": ["/tmp/finhelper_serve.py"],
       "port": 8080
     }
   ]

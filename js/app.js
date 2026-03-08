@@ -5,9 +5,9 @@
 const APP_KEY = 'financeHelper_v1';
 
 // Deterministic hash for transaction IDs (deduplication-safe)
-function txHash(bank, date, time, amount, desc) {
+function txHash(bank, date, time, amount, desc, authCode) {
   const norm = (desc || '').toUpperCase().replace(/\s+/g, ' ').trim().substring(0, 40);
-  const str = `${bank}_${date}_${time}_${amount}_${norm}`;
+  const str = `${bank}_${date}_${time}_${amount}_${norm}` + (authCode ? `_${authCode}` : '');
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const c = str.charCodeAt(i);
@@ -236,6 +236,122 @@ function loadState() {
       s.transactions = deduped;
       s._migrationHashV3 = true;
       if (rehashed > 0 || removed > 0) console.log(`[FinHelper] Migration v3: rehashed ${rehashed}, removed ${removed} duplicates`);
+    }
+
+    // Migration v4: clean descriptions (strip processing dates) + re-hash (FIX-1/FIX-2)
+    // Old descriptions included processing dates like "07.03.2026 KOPILKA KARTA-VKLAD"
+    // This caused different hashes when overlapping PDFs were uploaded → phantom duplicates
+    if (!s._migrationHashV4) {
+      let cleaned = 0;
+      for (const tx of s.transactions) {
+        // Clean description: strip leading processing date
+        if (tx.description) {
+          const oldDesc = tx.description;
+          const newDesc = oldDesc.replace(/^\d{2}\.\d{2}\.\d{4}\s+/, '');
+          if (newDesc !== oldDesc) {
+            tx.description = newDesc;
+            if (tx.merchant === oldDesc || !tx.merchant) tx.merchant = newDesc;
+            cleaned++;
+          }
+        }
+        // Re-hash with cleaned desc (authCode empty for old transactions)
+        const bankPrefix = tx.bank === 'Сбербанк' ? 'sber' : tx.bank === 'Тинькофф' ? 'tink' : 'csv';
+        const dateStr = tx.date ? tx.date.split('-').reverse().join('.') : '';
+        const amountStr = tx.amount ? tx.amount.toString() : '';
+        const newHash = txHash(bankPrefix, dateStr, tx.time || '', amountStr, tx.description || '', tx.authCode || '');
+        const newId = bankPrefix + '_' + dateStr + '_' + (tx.time || '') + '_' + newHash;
+        if (newId !== tx.id) {
+          tx._oldIdV3 = tx.id;
+          tx.id = newId;
+          cleaned++;
+        }
+      }
+      // Deduplicate after re-hashing
+      const seen = new Set();
+      const deduped = [];
+      for (const tx of s.transactions) {
+        if (!seen.has(tx.id)) {
+          seen.add(tx.id);
+          deduped.push(tx);
+        }
+      }
+      const removed = s.transactions.length - deduped.length;
+      s.transactions = deduped;
+      s._migrationHashV4 = true;
+      if (cleaned > 0 || removed > 0) console.log(`[FinHelper] Migration v4: cleaned ${cleaned}, removed ${removed} duplicates`);
+    }
+
+    // Migration v5: re-classify BRANCH KARTA-CREDIT as 'Перевод себе' (FIX-3)
+    if (!s._migrationTransferV5) {
+      let fixed = 0;
+      for (const tx of s.transactions) {
+        if (tx.category !== 'Перевод себе') {
+          const upper = (tx.description || '').toUpperCase();
+          if (upper.includes('KARTA-CREDIT') || upper.includes('KARTA CREDIT') ||
+              upper.includes('BRANCH KARTA-CREDIT') || upper.includes('BRANCH KARTA CREDIT') ||
+              upper.includes('ПОГАШЕНИЕ КРЕДИТА') || upper.includes('ПОГАШЕНИЕ КРЕДИТНОЙ')) {
+            tx.category = 'Перевод себе';
+            tx.type = 'transfer';
+            fixed++;
+          }
+        }
+      }
+      s._migrationTransferV5 = true;
+      if (fixed > 0) console.log(`[FinHelper] Migration v5: reclassified ${fixed} KARTA-CREDIT transactions`);
+    }
+
+    // Migration v6: remove paired duplicate transfers (FIX-6)
+    // Same authCode+date+time+amount = bank reported one operation as two lines
+    if (!s._migrationPairedDedupV6) {
+      const byAuthKey = new Map();
+      for (const tx of s.transactions) {
+        if (!tx.authCode || tx.authCode === '000000') continue;
+        const key = tx.authCode + '|' + tx.date + '|' + tx.time + '|' + tx.amount;
+        if (!byAuthKey.has(key)) byAuthKey.set(key, []);
+        byAuthKey.get(key).push(tx);
+      }
+      const removeIds = new Set();
+      for (const [key, group] of byAuthKey) {
+        if (group.length < 2) continue;
+        let best = group[0];
+        for (let k = 1; k < group.length; k++) {
+          const curr = group[k];
+          const bestDesc = (best.description || '').toUpperCase();
+          const currDesc = (curr.description || '').toUpperCase();
+          const bestHuman = /^ПЕРЕВОД (ДЛЯ|ОТ) /.test(bestDesc);
+          const currHuman = /^ПЕРЕВОД (ДЛЯ|ОТ) /.test(currDesc);
+          if (currHuman && !bestHuman) best = curr;
+          else if (!currHuman && !bestHuman && currDesc.length > bestDesc.length) best = curr;
+        }
+        for (const tx of group) {
+          if (tx !== best) removeIds.add(tx.id);
+        }
+      }
+      if (removeIds.size > 0) {
+        s.transactions = s.transactions.filter(tx => !removeIds.has(tx.id));
+        console.log(`[FinHelper] Migration v6: removed ${removeIds.size} paired duplicate transfers`);
+      }
+      s._migrationPairedDedupV6 = true;
+    }
+
+    // Migration v7: re-categorize with improved MERCHANT_RULES (FIX-7)
+    // Only re-categorize transactions that are still 'Прочее' and haven't been manually changed
+    if (!s._migrationRecatV7) {
+      let recat = 0;
+      for (const tx of s.transactions) {
+        if (tx.category !== 'Прочее') continue;
+        if (tx._userEdited) continue; // don't touch manually categorized
+        const newCat = categorizeTransaction(tx.description, tx.bankCategory);
+        if (newCat !== 'Прочее') {
+          tx.category = newCat;
+          // Update type if needed
+          if (newCat === 'Наличные расход') tx.type = 'expense';
+          if (newCat === 'Перевод себе') tx.type = 'transfer';
+          recat++;
+        }
+      }
+      s._migrationRecatV7 = true;
+      if (recat > 0) console.log(`[FinHelper] Migration v7: re-categorized ${recat} transactions from Прочее`);
     }
 
     return s;
@@ -607,6 +723,46 @@ const MERCHANT_RULES = [
   { patterns: ['РОСГОССТРАХ','ROSGOSSTRAH','ТИНЬКОФФ СТРАХОВ'], cat: 'Страхование' },
   { patterns: ['МЕГАФОН БАНК','TELE2 BANK'], cat: 'Подписки и связь' },
   { patterns: ['DOMCLICK','ДОМКЛИК','ЦИАН','CIAN','ЯНДЕКС НЕДВИЖИМ'], cat: 'Жильё' },
+
+  // --- Наличные (ATM снятия) ---
+  { patterns: ['ATM ','БАНКОМАТ','CASH WITHDRAWAL','СНЯТИЕ НАЛИЧНЫХ','ATM_'], cat: 'Наличные расход' },
+
+  // --- Автомобиль (доп.) ---
+  { patterns: ['АВТОПЛАТЁЖ ТАЧКА','АВТОПЛАТЕЖ ТАЧКА','ТАЧКА'], cat: 'Автомобиль' },
+  { patterns: ['TVEL-SPORT','ТВЕЛ-СПОРТ'], cat: 'Автомобиль' },
+
+  // --- Еда вне дома (доп. из выписок) ---
+  { patterns: ['UZHINDOMA','УЖИНДОМА','УЖИН ДОМА'], cat: 'Еда вне дома' },
+  { patterns: ['CHEFMARKET','ШЕФ МАРКЕТ','ШЕФМАРКЕТ'], cat: 'Еда вне дома' },
+
+  // --- Финансы / Инвестиции ---
+  { patterns: ['СБЕРНПФ','НПФ','ПЕНСИОНН','NPF'], cat: 'Перевод себе' },
+  { patterns: ['SBERBANK_ONL@IN VKLAD','VKLAD-KAR'], cat: 'Перевод себе' },
+
+  // --- Кабинет жителя / Дом ---
+  { patterns: ['KABINET-ZHITELYA','КАБИНЕТ ЖИТЕЛЯ','КАБИНЕТ-ЖИТЕЛЯ'], cat: 'Коммуналка' },
+
+  // --- Доп. маркетплейсы ---
+  { patterns: ['DDX','ДДХ'], cat: 'Маркетплейсы' },
+  { patterns: ['FAST BOX','FASTBOX','ФАСТ БОКС'], cat: 'Маркетплейсы' },
+
+  // --- Дом (доп.) ---
+  { patterns: ['YAKOB-ART','ЯКОБ-АРТ','ЯКОБ АРТ'], cat: 'Дом' },
+  { patterns: ['TROYA-LYUKS','ТРОЯ-ЛЮКС','ТРОЯ ЛЮКС','TROYA LYUKS'], cat: 'Дом' },
+  { patterns: ['ARED SPB','АРЕД СПБ'], cat: 'Дом' },
+
+  // --- Здоровье (доп.) ---
+  { patterns: ['ЯКОБ-ДЕНТИК','YAKOB-DENT','ДЕНТИК'], cat: 'Здоровье' },
+
+  // --- Страхование (доп.) ---
+  { patterns: ['OSK-INS','ОСК-ИНС','YM*OSK'], cat: 'Страхование' },
+
+  // --- Прочие внутренние платежи Сбер ---
+  { patterns: ['МОМЕНТАЛЬНЫЕ ПЛАТЕЖИ','SBSCR_МОМЕНТ'], cat: 'Переводы' },
+  { patterns: ['BPWWW','ОПЛАТА УСЛУГ'], cat: 'Прочее' },
+
+  // --- Доп. по данным из выписок ---
+  { patterns: ['РЯДКОМ','RDKOM'], cat: 'Продукты' },
 ];
 
 function categorizeTransaction(desc, bankCat) {
@@ -734,6 +890,8 @@ function classifyTransferType(desc, bankCat, isIncome) {
   const selfPatterns = [
     'KOPILKA', 'КОПИЛКА',
     'KARTA-VKLAD', 'KARTA VKLAD', 'КАРТА-ВКЛАД', 'КАРТА ВКЛАД',
+    'KARTA-CREDIT', 'KARTA CREDIT', 'КАРТА-КРЕДИТ', 'КАРТА КРЕДИТ',
+    'BRANCH KARTA-CREDIT', 'BRANCH KARTA CREDIT',
     'ПОПОЛНЕНИЕ ВКЛАДА', 'ПОПОЛНЕНИЕ СЧЁТА', 'ПОПОЛНЕНИЕ СЧЕТА',
     'ПЕРЕВОД МЕЖДУ СЧЕТАМИ', 'МЕЖДУ СВОИМИ СЧЕТАМИ', 'МЕЖДУ СВОИМИ',
     'НАКОПИТЕЛЬНЫЙ СЧЁТ', 'НАКОПИТЕЛЬНЫЙ СЧЕТ', 'НАКОПИТЕЛЬН',
@@ -741,6 +899,7 @@ function classifyTransferType(desc, bankCat, isIncome) {
     'ПЕРЕВОД НА ВКЛАД', 'ПЕРЕВОД СО ВКЛАДА',
     'СО ВКЛАДА', 'НА ВКЛАД',
     'ВНУТРИБАНКОВСКИЙ ПЕРЕВОД', 'ВНУТРЕННИЙ ПЕРЕВОД',
+    'ПОГАШЕНИЕ КРЕДИТА', 'ПОГАШЕНИЕ КРЕДИТНОЙ',
   ];
 
   for (const pat of selfPatterns) {
@@ -864,7 +1023,7 @@ function parseSber(text) {
   // MODE D (debit, split cells): "31.01.2026 21:13 734687" / category / amount / balance / date2 / description
   // MODE E (full-line fallback): "27.02.2026 14:31 444516 Перевод СБП 1 125,00 124,09" (all on one line)
 
-  const dateTimeAuthCatRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})\s+\d{6}\s+(.+)$/;
+  const dateTimeAuthCatRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})\s+(\d{6})\s+(.+)$/;
   const dateTimeAuthOnlyRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})\s+(\d{6})$/;
   const dateTimeRe = /^(\d{2}\.\d{2}\.\d{4})\s+(\d{2}:\d{2})$/;
   const dateRe = /^\d{2}\.\d{2}\.\d{4}$/;
@@ -885,6 +1044,7 @@ function parseSber(text) {
 
   for (let i = 0; i < lines.length - 2; i++) {
     let date, time, category, amountLine, balanceLine, descStart;
+    let authCode = '';
 
     // MODE C: "27.02.2026 14:31 444516 Перевод СБП" / amount / balance / date2 / description
     // MODE E fallback: same regex but amounts embedded in category capture
@@ -892,7 +1052,8 @@ function parseSber(text) {
     if (dtacMatch) {
       date = dtacMatch[1];
       time = dtacMatch[2];
-      const catRaw = dtacMatch[3];
+      authCode = dtacMatch[3];
+      const catRaw = dtacMatch[4];
       if (i + 2 < lines.length && amountRe.test(lines[i + 1]) && amountRe.test(lines[i + 2])) {
         // MODE C: amounts on next lines
         category = catRaw;
@@ -917,6 +1078,7 @@ function parseSber(text) {
       if (dtaMatch) {
         date = dtaMatch[1];
         time = dtaMatch[2];
+        authCode = dtaMatch[3];
         if (i + 3 >= lines.length) continue;
         category = lines[i + 1];
         if (dateRe.test(category) || amountRe.test(category) || dateTimeRe.test(category) ||
@@ -946,6 +1108,7 @@ function parseSber(text) {
 
         if (authRe.test(lines[nextIdx])) {
           // DEBIT: authcode → category → amount → balance
+          authCode = lines[nextIdx];
           if (nextIdx + 3 >= lines.length) continue;
           category = lines[nextIdx + 1];
           if (dateRe.test(category) || amountRe.test(category) || dateTimeRe.test(category)) continue;
@@ -969,25 +1132,35 @@ function parseSber(text) {
     const amountStr = amountLine.replace(/\s/g, '').replace(',', '.');
     const balanceStr = balanceLine.replace(/\s/g, '').replace(',', '.');
 
-    // Collect description, skipping date2+authcode
+    // Collect description, skipping date2+authcode, extracting authCode if not yet set
     let desc = '';
     let j = descStart;
     // Skip merged date2+authcode: "25.01.2026 060393"
     if (j < lines.length && dateAuthRe.test(lines[j])) {
+      if (!authCode) {
+        const daMatch = lines[j].match(/^\d{2}\.\d{2}\.\d{4}\s+(\d{6})$/);
+        if (daMatch) authCode = daMatch[1];
+      }
       j++;
     } else {
       // Or skip separate date2 and authcode
       if (j < lines.length && dateRe.test(lines[j])) j++;
-      if (j < lines.length && authRe.test(lines[j])) j++;
+      if (j < lines.length && authRe.test(lines[j])) {
+        if (!authCode) authCode = lines[j];
+        j++;
+      }
     }
     // Collect until next transaction or page marker
+    // FIX-1: Strip leading processing dates from description lines
     while (j < lines.length) {
       const l = lines[j];
       if (isNewTxStart(j)) break;
       if (pageMarkerRe.test(l)) break;
       if (dateRe.test(l) || dateTimeRe.test(l) || dateAuthRe.test(l)) { j++; continue; }
       if (authRe.test(l)) { j++; continue; }
-      desc += (desc ? ' ' : '') + l;
+      // Strip leading processing date (e.g. "07.03.2026 KOPILKA KARTA-VKLAD" → "KOPILKA KARTA-VKLAD")
+      const cleaned = l.replace(/^\d{2}\.\d{2}\.\d{4}\s+/, '');
+      if (cleaned) desc += (desc ? ' ' : '') + cleaned;
       j++;
     }
 
@@ -1018,7 +1191,8 @@ function parseSber(text) {
     }
 
     transactions.push({
-      id: 'sber_' + date + '_' + time + '_' + txHash('sber', date, time, amountStr, desc),
+      id: 'sber_' + date + '_' + time + '_' + txHash('sber', date, time, amountStr, desc, authCode),
+      authCode: authCode || '',
       date: isoDate,
       time: time,
       monthKey: monthKey,
@@ -1033,6 +1207,42 @@ function parseSber(text) {
     });
 
     i = j - 1;
+  }
+
+  // FIX-6: Deduplicate paired transfers
+  // Sber reports some operations as two lines with same authCode+time+amount but different descriptions:
+  //   "SBOL перевод на карту 5469****7742 М. ГАСАНАГА..." (technical)
+  //   "Перевод для М. Гасанага Гюльоглан Оглы" (human-readable)
+  // Keep the more descriptive one (longer description or the "Перевод для/от" variant)
+  const byAuthKey = new Map();
+  for (const tx of transactions) {
+    if (!tx.authCode || tx.authCode === '000000') continue;
+    const key = tx.authCode + '|' + tx.date + '|' + tx.time + '|' + tx.amount;
+    if (!byAuthKey.has(key)) byAuthKey.set(key, []);
+    byAuthKey.get(key).push(tx);
+  }
+  const removeIds = new Set();
+  for (const [key, group] of byAuthKey) {
+    if (group.length < 2) continue;
+    // Keep the best description: prefer "Перевод для/от" human-readable, else longest
+    let best = group[0];
+    for (let k = 1; k < group.length; k++) {
+      const curr = group[k];
+      const bestDesc = (best.description || '').toUpperCase();
+      const currDesc = (curr.description || '').toUpperCase();
+      // Prefer human-readable "Перевод для/от" over SBOL technical
+      const bestHuman = /^ПЕРЕВОД (ДЛЯ|ОТ) /.test(bestDesc);
+      const currHuman = /^ПЕРЕВОД (ДЛЯ|ОТ) /.test(currDesc);
+      if (currHuman && !bestHuman) best = curr;
+      else if (!currHuman && !bestHuman && currDesc.length > bestDesc.length) best = curr;
+    }
+    for (const tx of group) {
+      if (tx !== best) removeIds.add(tx.id);
+    }
+  }
+  if (removeIds.size > 0) {
+    console.log(`[FinHelper] FIX-6: Removed ${removeIds.size} paired duplicate transfers`);
+    return transactions.filter(tx => !removeIds.has(tx.id));
   }
 
   return transactions;
@@ -1309,10 +1519,82 @@ async function handleFiles(files) {
     let unique = [];
     let dupeCount = 0;
     try {
-      // Merge, avoiding duplicates by id
+      // Merge, avoiding duplicates — smart dedup (FIX-2: handles authCode transition)
       const existingIds = new Set(STATE.transactions.map(t => t.id));
+
+      // Phase 1: exact ID match (fast path)
       unique = allNewTx.filter(t => !existingIds.has(t.id));
+
+      // Phase 2: semantic dedup for old↔new transition
+      // Old transactions without authCode get different hash than new ones with authCode
+      // Match by (bank, date, time, amount, normalizedDesc) and upgrade old entries
+      if (unique.length > 0) {
+        const existingByBaseKey = new Map();
+        for (const t of STATE.transactions) {
+          const norm = (t.description || '').toUpperCase().replace(/\s+/g, ' ').trim().substring(0, 40);
+          const key = `${t.bank}_${t.date}_${t.time}_${t.amount}_${norm}`;
+          if (!existingByBaseKey.has(key)) existingByBaseKey.set(key, []);
+          existingByBaseKey.get(key).push(t);
+        }
+
+        unique = unique.filter(newTx => {
+          const norm = (newTx.description || '').toUpperCase().replace(/\s+/g, ' ').trim().substring(0, 40);
+          const key = `${newTx.bank}_${newTx.date}_${newTx.time}_${newTx.amount}_${norm}`;
+          const matches = existingByBaseKey.get(key);
+          if (!matches || matches.length === 0) return true; // no match → new transaction
+
+          // Check if any existing entry is the same transaction (upgrade scenario)
+          for (const m of matches) {
+            // Both have authCode and they match → duplicate
+            if (m.authCode && newTx.authCode && m.authCode === newTx.authCode) return false;
+            // Existing has no authCode → old version, upgrade it
+            if (!m.authCode && newTx.authCode) {
+              m.authCode = newTx.authCode;
+              m.id = newTx.id;
+              existingIds.add(newTx.id);
+              return false;
+            }
+            // Neither has authCode → duplicate
+            if (!m.authCode && !newTx.authCode) return false;
+          }
+          // All existing have different authCodes → legitimate different transaction
+          return true;
+        });
+      }
+
       STATE.transactions = STATE.transactions.concat(unique);
+
+      // FIX-6 cross-file: deduplicate paired transfers across all loaded transactions
+      // Same authCode+date+time+amount from different files = same operation reported twice
+      const byAuthKey = new Map();
+      for (const tx of STATE.transactions) {
+        if (!tx.authCode || tx.authCode === '000000') continue;
+        const key = tx.authCode + '|' + tx.date + '|' + tx.time + '|' + tx.amount;
+        if (!byAuthKey.has(key)) byAuthKey.set(key, []);
+        byAuthKey.get(key).push(tx);
+      }
+      const pairedRemoveIds = new Set();
+      for (const [key, group] of byAuthKey) {
+        if (group.length < 2) continue;
+        let best = group[0];
+        for (let k = 1; k < group.length; k++) {
+          const curr = group[k];
+          const bestD = (best.description || '').toUpperCase();
+          const currD = (curr.description || '').toUpperCase();
+          const bestH = /^ПЕРЕВОД (ДЛЯ|ОТ) /.test(bestD);
+          const currH = /^ПЕРЕВОД (ДЛЯ|ОТ) /.test(currD);
+          if (currH && !bestH) best = curr;
+          else if (!currH && !bestH && currD.length > bestD.length) best = curr;
+        }
+        for (const tx of group) {
+          if (tx !== best) pairedRemoveIds.add(tx.id);
+        }
+      }
+      if (pairedRemoveIds.size > 0) {
+        STATE.transactions = STATE.transactions.filter(tx => !pairedRemoveIds.has(tx.id));
+        console.log(`[FinHelper] FIX-6: Removed ${pairedRemoveIds.size} cross-file paired duplicates`);
+      }
+
       STATE.transactions.sort((a, b) => {
         const da = a.date || ''; const db = b.date || '';
         return db.localeCompare(da) || (b.time || '').localeCompare(a.time || '');
@@ -2778,6 +3060,9 @@ function formatTxDate(tx) {
 
 function renderTxItem(tx) {
   const info = CATEGORIES[tx.category] || { emoji: '❓' };
+  // Special emoji for KOPILKA auto-savings (FIX-4)
+  const isKopilka = /KOPILKA|КОПИЛКА/i.test(tx.description || '');
+  const emoji = isKopilka ? '🐷' : info.emoji;
   const colorClass = tx.type === 'income' ? 'amount-income' : (tx.type === 'transfer' ? '' : 'amount-expense');
   const sign = tx.type === 'income' ? '+' : (tx.type === 'transfer' ? '' : '-');
   const commentBadge = tx.comment ? ' · 💬' : '';
@@ -2786,7 +3071,7 @@ function renderTxItem(tx) {
   const escapedId = tx.id.replace(/'/g, "\\'");
   const dateStr = formatTxDate(tx);
   return '<div class="tx-item" data-txid="' + tx.id.replace(/"/g, '&quot;') + '" onclick="openRecat(\'' + escapedId + '\')">'
-    + '<div class="tx-emoji">' + info.emoji + '</div>'
+    + '<div class="tx-emoji">' + emoji + '</div>'
     + '<div class="tx-info">'
     + '<div class="tx-desc">' + manualBadge + cleanDescription(tx.description) + '</div>'
     + '<div class="tx-cat">' + tx.category + ' · ' + (tx.bank || '') + commentBadge + selfBadge + '</div>'
